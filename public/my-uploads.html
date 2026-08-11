@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>My Uploads – StreamVault</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/" class="nav-logo">
+    <svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>
+    StreamVault
+  </a>
+  <div class="nav-actions" id="nav-actions"></div>
+</nav>
+
+<div class="container page">
+  <div class="section-header">
+    <h2 class="section-title">My Uploads</h2>
+    <a href="/upload.html" class="btn btn-primary btn-sm">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Upload new
+    </a>
+  </div>
+  <div id="uploads-list">
+    <div class="loader"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- Delete modal -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal">
+    <h2>Delete video?</h2>
+    <p>This will permanently delete your video and cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-delete">Cancel</button>
+      <button class="btn btn-danger" id="confirm-delete">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script type="module">
+import { api, toast, initNav, formatDate, formatViews, formatBytes } from '/app.js';
+
+initNav();
+
+const me = await api.get('/api/auth/me');
+if (!me.user) { window.location.href = '/login.html'; }
+
+const list = document.getElementById('uploads-list');
+const modal = document.getElementById('delete-modal');
+const cancelBtn = document.getElementById('cancel-delete');
+const confirmBtn = document.getElementById('confirm-delete');
+let pendingDeleteId = null;
+
+cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
+modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('show'); });
+
+confirmBtn.addEventListener('click', async () => {
+  if (!pendingDeleteId) return;
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Deleting…';
+  try {
+    await api.delete(`/api/videos/${pendingDeleteId}`);
+    toast('Video deleted', 'success');
+    modal.classList.remove('show');
+    await loadUploads();
+  } catch (err) {
+    toast(err.message || 'Delete failed', 'error');
+  } finally {
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'Delete';
+  }
+});
+
+async function loadUploads() {
+  list.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+  try {
+    const data = await api.get('/api/videos/my/uploads');
+    const videos = data.videos || [];
+    if (!videos.length) {
+      list.innerHTML = `
+        <div class="empty-state">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="2" width="20" height="20" rx="3"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          <h3>No uploads yet</h3>
+          <p>Upload your first video to get started.</p>
+          <a href="/upload.html" class="btn btn-primary" style="margin-top:1rem">Upload video</a>
+        </div>`;
+      return;
+    }
+    list.innerHTML = videos.map(v => `
+      <div class="my-uploads-card" id="card-${v.id}">
+        <img class="my-uploads-thumb" src="/api/videos/${v.id}/thumbnail" alt="${escHtml(v.title)}" loading="lazy"/>
+        <div class="my-uploads-info">
+          <p class="my-uploads-title">${escHtml(v.title)}</p>
+          <p class="my-uploads-meta">${formatViews(v.view_count)} views · ${formatBytes(v.file_size)} · ${formatDate(v.created_at)}</p>
+          <div class="my-uploads-actions">
+            <a href="/watch.html?id=${v.id}" class="btn btn-ghost btn-sm">Watch</a>
+            <button class="btn btn-danger btn-sm" onclick="deleteVideo(${v.id})">Delete</button>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch (err) {
+    list.innerHTML = `<p style="color:var(--text-muted)">Failed to load uploads: ${escHtml(err.message)}</p>`;
+  }
+}
+
+window.deleteVideo = (id) => {
+  pendingDeleteId = id;
+  modal.classList.add('show');
+};
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadUploads();
+</script>
+</body>
+</html>

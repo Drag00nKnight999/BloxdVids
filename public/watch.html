@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Watch – StreamVault</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/" class="nav-logo">
+    <svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>
+    StreamVault
+  </a>
+  <div class="nav-actions" id="nav-actions"></div>
+</nav>
+
+<div class="container">
+  <div class="watch-layout" id="watch-layout">
+    <div class="loader"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal">
+    <h2>Delete video?</h2>
+    <p>This will permanently delete your video and cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-delete">Cancel</button>
+      <button class="btn btn-danger" id="confirm-delete">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script type="module">
+import { api, toast, initNav, formatDate, formatViews } from '/app.js';
+
+initNav();
+
+const params = new URLSearchParams(location.search);
+const videoId = parseInt(params.get('id'), 10);
+const layout = document.getElementById('watch-layout');
+
+if (!videoId) {
+  layout.innerHTML = '<p style="color:var(--text-muted);padding:2rem">Invalid video ID.</p>';
+} else {
+  const [videoData, relatedData, meData] = await Promise.all([
+    api.get(`/api/videos/${videoId}`),
+    api.get('/api/videos?limit=10'),
+    api.get('/api/auth/me'),
+  ]);
+
+  document.title = `${videoData.title} – StreamVault`;
+
+  const isOwner = meData.user && meData.user.id === videoData.user_id;
+  const related = (relatedData.videos || []).filter(v => v.id !== videoId).slice(0, 8);
+
+  layout.innerHTML = `
+    <div>
+      <div class="video-player-wrap">
+        <video id="player" controls preload="metadata" playsinline>
+          <source src="/api/videos/${videoId}/stream" type="${videoData.mime_type}"/>
+          Your browser does not support video playback.
+        </video>
+      </div>
+      <div class="video-details">
+        <h1>${escHtml(videoData.title)}</h1>
+        <div class="meta-row">
+          <span class="meta-info">
+            By <strong>${escHtml(videoData.uploader)}</strong>
+            · ${formatViews(videoData.view_count)} views
+            · ${formatDate(videoData.created_at)}
+          </span>
+          ${isOwner ? `<button class="btn btn-danger btn-sm" id="delete-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            Delete
+          </button>` : ''}
+        </div>
+        ${videoData.description ? `<p class="video-description">${escHtml(videoData.description)}</p>` : ''}
+      </div>
+    </div>
+    <aside class="related-panel">
+      <h2>More videos</h2>
+      ${related.length ? related.map(v => `
+        <div class="related-card" onclick="location.href='/watch.html?id=${v.id}'">
+          <img class="related-thumb" src="/api/videos/${v.id}/thumbnail" alt="${escHtml(v.title)}" loading="lazy"/>
+          <div class="related-info">
+            <p class="related-title">${escHtml(v.title)}</p>
+            <p class="related-meta">${escHtml(v.uploader)} · ${formatViews(v.view_count)} views</p>
+          </div>
+        </div>`).join('') : '<p style="color:var(--text-muted);font-size:.875rem">No other videos yet.</p>'}
+    </aside>
+  `;
+
+  if (isOwner) {
+    const deleteBtn = document.getElementById('delete-btn');
+    const modal = document.getElementById('delete-modal');
+    const cancelBtn = document.getElementById('cancel-delete');
+    const confirmBtn = document.getElementById('confirm-delete');
+
+    deleteBtn.addEventListener('click', () => modal.classList.add('show'));
+    cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('show'); });
+
+    confirmBtn.addEventListener('click', async () => {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Deleting…';
+      try {
+        await api.delete(`/api/videos/${videoId}`);
+        toast('Video deleted', 'success');
+        setTimeout(() => window.location.href = '/', 800);
+      } catch (err) {
+        toast(err.message || 'Delete failed', 'error');
+        modal.classList.remove('show');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Delete';
+      }
+    });
+  }
+}
+
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+</script>
+</body>
+</html>

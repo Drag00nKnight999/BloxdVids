@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>StreamVault</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+
+<nav class="navbar" id="navbar">
+  <a href="/" class="nav-logo">
+    <svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>
+    StreamVault
+  </a>
+  <div class="nav-search">
+    <input type="search" id="search-input" placeholder="Search videos…" autocomplete="off"/>
+    <button id="search-btn" title="Search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </button>
+  </div>
+  <div class="nav-actions" id="nav-actions">
+    <!-- filled by JS -->
+  </div>
+</nav>
+
+<main class="container page">
+  <div class="section-header">
+    <h2 class="section-title" id="section-title">Latest Videos</h2>
+  </div>
+  <div id="video-grid-wrap">
+    <div class="loader"><div class="spinner"></div></div>
+  </div>
+  <div class="pagination" id="pagination"></div>
+</main>
+
+<div id="toast-container"></div>
+<script src="/app.js" type="module"></script>
+<script type="module">
+import { initNav, loadVideos } from '/app.js';
+initNav();
+loadVideos();
+</script>
+</body>
+</html>

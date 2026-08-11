@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Login – StreamVault</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/" class="nav-logo">
+    <svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>
+    StreamVault
+  </a>
+  <div class="nav-actions">
+    <a href="/register.html" class="btn btn-ghost btn-sm">Create account</a>
+  </div>
+</nav>
+
+<div class="auth-page">
+  <div class="auth-card">
+    <h1>Welcome back</h1>
+    <p class="subtitle">Sign in to upload and manage your videos</p>
+
+    <div class="form-error" id="error-msg"></div>
+
+    <form id="login-form">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input class="form-control" id="username" type="text" placeholder="your_username" autocomplete="username" required/>
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input class="form-control" id="password" type="password" placeholder="••••••••" autocomplete="current-password" required/>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%" id="submit-btn">Sign in</button>
+    </form>
+
+    <div class="auth-footer">
+      Don't have an account? <a href="/register.html">Create one</a>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script type="module">
+import { api, toast } from '/app.js';
+
+const form = document.getElementById('login-form');
+const errorMsg = document.getElementById('error-msg');
+const submitBtn = document.getElementById('submit-btn');
+
+// Redirect if already logged in
+api.get('/api/auth/me').then(data => {
+  if (data.user) window.location.href = '/';
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorMsg.classList.remove('show');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Signing in…';
+
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+
+  try {
+    await api.post('/api/auth/login', { username, password });
+    toast('Signed in!', 'success');
+    setTimeout(() => window.location.href = '/', 600);
+  } catch (err) {
+    errorMsg.textContent = err.message || 'Login failed';
+    errorMsg.classList.add('show');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Sign in';
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Upload Video – StreamVault</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/" class="nav-logo">
+    <svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>
+    StreamVault
+  </a>
+  <div class="nav-actions" id="nav-actions"></div>
+</nav>
+
+<div class="upload-page container">
+  <h1>Upload a video</h1>
+
+  <div class="form-error" id="error-msg"></div>
+  <div class="form-success" id="success-msg"></div>
+
+  <form id="upload-form" enctype="multipart/form-data">
+    <!-- Video file drop zone -->
+    <div class="drop-zone" id="drop-zone" tabindex="0" role="button" aria-label="Select video file">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <p class="drop-label">Drag &amp; drop your video here, or <strong>browse</strong></p>
+      <p style="color:var(--text-dim);font-size:.8rem;margin-top:.5rem">MP4, WebM, MOV, AVI, MKV — up to 5 GB</p>
+      <p class="file-name" id="file-name" style="display:none"></p>
+      <p class="file-size" id="file-size"></p>
+      <input type="file" id="video-input" name="video" accept="video/*" hidden required/>
+    </div>
+
+    <!-- Title -->
+    <div class="form-group">
+      <label for="title">Title <span style="color:var(--accent)">*</span></label>
+      <input class="form-control" id="title" name="title" type="text" placeholder="Enter a title for your video" maxlength="255" required/>
+    </div>
+
+    <!-- Description -->
+    <div class="form-group">
+      <label for="description">Description</label>
+      <textarea class="form-control" id="description" name="description" placeholder="Describe your video…" rows="4" maxlength="5000"></textarea>
+      <small style="color:var(--text-dim);font-size:.78rem;margin-top:.3rem;display:block">
+        <span id="desc-count">0</span>/5000 characters
+      </small>
+    </div>
+
+    <!-- Thumbnail -->
+    <div class="form-group">
+      <label>Thumbnail (optional)</label>
+      <label class="thumb-upload" id="thumb-label" for="thumb-input">
+        <img class="thumb-preview" id="thumb-preview" src="/placeholder-thumb.svg" alt="Thumbnail preview"/>
+        <div>
+          <p class="thumb-upload-label">Click to upload a custom thumbnail</p>
+          <small style="color:var(--text-dim);font-size:.78rem">JPG, PNG, WebP — up to 10 MB</small>
+        </div>
+        <input type="file" id="thumb-input" name="thumbnail" accept="image/*" hidden/>
+      </label>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-bar-wrap" id="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <p class="progress-label" id="progress-label"></p>
+
+    <button type="submit" class="btn btn-primary" id="submit-btn" style="margin-top:1rem">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Upload video
+    </button>
+  </form>
+</div>
+
+<div id="toast-container"></div>
+<script type="module">
+import { api, toast, initNav } from '/app.js';
+
+initNav();
+
+// Auth guard
+const me = await api.get('/api/auth/me');
+if (!me.user) {
+  window.location.href = '/login.html';
+}
+
+const dropZone = document.getElementById('drop-zone');
+const videoInput = document.getElementById('video-input');
+const fileName = document.getElementById('file-name');
+const fileSize = document.getElementById('file-size');
+const thumbInput = document.getElementById('thumb-input');
+const thumbPreview = document.getElementById('thumb-preview');
+const descInput = document.getElementById('description');
+const descCount = document.getElementById('desc-count');
+const form = document.getElementById('upload-form');
+const submitBtn = document.getElementById('submit-btn');
+const errorMsg = document.getElementById('error-msg');
+const successMsg = document.getElementById('success-msg');
+const progressWrap = document.getElementById('progress-wrap');
+const progressBar = document.getElementById('progress-bar');
+const progressLabel = document.getElementById('progress-label');
+
+// Drop zone click
+dropZone.addEventListener('click', () => videoInput.click());
+dropZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') videoInput.click(); });
+
+// Drag & drop
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) setVideoFile(f);
+});
+
+videoInput.addEventListener('change', () => {
+  if (videoInput.files[0]) setVideoFile(videoInput.files[0]);
+});
+
+function setVideoFile(f) {
+  const dt = new DataTransfer();
+  dt.items.add(f);
+  videoInput.files = dt.files;
+  fileName.textContent = f.name;
+  fileName.style.display = 'block';
+  fileSize.textContent = formatBytes(f.size);
+}
+
+// Thumbnail preview
+thumbInput.addEventListener('change', () => {
+  const f = thumbInput.files[0];
+  if (f) thumbPreview.src = URL.createObjectURL(f);
+});
+
+// Description counter
+descInput.addEventListener('input', () => {
+  descCount.textContent = descInput.value.length;
+});
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 ** 2) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1024 ** 3) return (b / 1024 ** 2).toFixed(1) + ' MB';
+  return (b / 1024 ** 3).toFixed(2) + ' GB';
+}
+
+// Upload with XMLHttpRequest for progress tracking
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorMsg.classList.remove('show');
+  successMsg.classList.remove('show');
+
+  const title = document.getElementById('title').value.trim();
+  if (!title) {
+    errorMsg.textContent = 'Please enter a title';
+    errorMsg.classList.add('show');
+    return;
+  }
+  if (!videoInput.files[0]) {
+    errorMsg.textContent = 'Please select a video file';
+    errorMsg.classList.add('show');
+    return;
+  }
+
+  submitBtn.disabled = true;
+  progressWrap.classList.add('show');
+
+  const fd = new FormData(form);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/videos');
+
+  xhr.upload.addEventListener('progress', (ev) => {
+    if (ev.lengthComputable) {
+      const pct = Math.round((ev.loaded / ev.total) * 100);
+      progressBar.style.width = pct + '%';
+      progressLabel.textContent = `Uploading… ${pct}% (${formatBytes(ev.loaded)} / ${formatBytes(ev.total)})`;
+    }
+  });
+
+  xhr.addEventListener('load', () => {
+    if (xhr.status === 201) {
+      const data = JSON.parse(xhr.responseText);
+      progressLabel.textContent = 'Upload complete!';
+      progressBar.style.width = '100%';
+      successMsg.textContent = 'Video uploaded successfully! Redirecting…';
+      successMsg.classList.add('show');
+      setTimeout(() => window.location.href = `/watch.html?id=${data.video.id}`, 1200);
+    } else {
+      let msg = 'Upload failed';
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+      errorMsg.textContent = msg;
+      errorMsg.classList.add('show');
+      progressWrap.classList.remove('show');
+      submitBtn.disabled = false;
+    }
+  });
+
+  xhr.addEventListener('error', () => {
+    errorMsg.textContent = 'Network error during upload';
+    errorMsg.classList.add('show');
+    progressWrap.classList.remove('show');
+    submitBtn.disabled = false;
+  });
+
+  xhr.send(fd);
+});
+</script>
+</body>
+</html>
