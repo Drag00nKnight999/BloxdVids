@@ -5,12 +5,9 @@ import pool from '../db.js';
 const router = Router();
 const SALT_ROUNDS = 12;
 
-// Simple username/email validation
+// Simple username validation
 function isValidUsername(u) {
   return /^[a-zA-Z0-9_]{3,30}$/.test(u);
-}
-function isValidEmail(e) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 255;
 }
 function isValidPassword(p) {
   return typeof p === 'string' && p.length >= 8 && p.length <= 128;
@@ -19,16 +16,13 @@ function isValidPassword(p) {
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password } = req.body || {};
+    const { username, password } = req.body || {};
 
-    if (!username || !email || !password) {
-      return res.status(400).json({ error: 'All fields are required' });
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
     }
     if (!isValidUsername(username)) {
       return res.status(400).json({ error: 'Username must be 3–30 characters and contain only letters, numbers, or underscores' });
-    }
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ error: 'Invalid email address' });
     }
     if (!isValidPassword(password)) {
       return res.status(400).json({ error: 'Password must be 8–128 characters' });
@@ -36,8 +30,8 @@ router.post('/register', async (req, res) => {
 
     const hash = await bcrypt.hash(password, SALT_ROUNDS);
     const result = await pool.query(
-      'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email',
-      [username.toLowerCase(), email.toLowerCase(), hash]
+      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username',
+      [username.toLowerCase(), hash]
     );
 
     const user = result.rows[0];
@@ -48,12 +42,11 @@ router.post('/register', async (req, res) => {
       }
       req.session.userId = user.id;
       req.session.username = user.username;
-      res.json({ user: { id: user.id, username: user.username, email: user.email } });
+      res.json({ user: { id: user.id, username: user.username } });
     });
   } catch (err) {
     if (err.code === '23505') {
-      const field = err.detail?.includes('username') ? 'Username' : 'Email';
-      return res.status(409).json({ error: `${field} is already taken` });
+      return res.status(409).json({ error: 'Username is already taken' });
     }
     console.error('Register error:', err);
     res.status(500).json({ error: 'Registration failed' });
@@ -70,7 +63,7 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, username, email, password_hash FROM users WHERE username = $1',
+      'SELECT id, username, password_hash FROM users WHERE username = $1',
       [username.toLowerCase()]
     );
     const user = result.rows[0];
@@ -90,7 +83,7 @@ router.post('/login', async (req, res) => {
       if (err) return res.status(500).json({ error: 'Login failed' });
       req.session.userId = user.id;
       req.session.username = user.username;
-      res.json({ user: { id: user.id, username: user.username, email: user.email } });
+      res.json({ user: { id: user.id, username: user.username } });
     });
   } catch (err) {
     console.error('Login error:', err);

@@ -14,7 +14,6 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       username VARCHAR(50) UNIQUE NOT NULL,
-      email VARCHAR(255) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -38,6 +37,7 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id);
     CREATE INDEX IF NOT EXISTS idx_videos_created_at ON videos(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_videos_title ON videos USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '')));
+    ALTER TABLE users DROP COLUMN IF EXISTS email;
     ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_mime_type VARCHAR(100);
   `);
 }
