@@ -7,9 +7,15 @@ import videoRoutes from './routes/videos.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const sessionSecret = process.env.SESSION_SECRET;
+
+if (!sessionSecret) {
+  throw new Error('SESSION_SECRET must be configured before starting BloxdVids');
+}
 
 // Trust Replit's proxy
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
 // Body parsing
 app.use(express.json({ limit: '1mb' }));
@@ -24,7 +30,7 @@ app.use(
       tableName: 'session',
       createTableIfMissing: true,
     }),
-    secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -43,6 +49,18 @@ app.use((_req, res, next) => {
     'X-Frame-Options': 'SAMEORIGIN',
     'X-XSS-Protection': '1; mode=block',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Content-Security-Policy': [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'self'",
+      "img-src 'self' blob: data:",
+      "media-src 'self' blob:",
+      "style-src 'self' 'unsafe-inline'",
+      "script-src 'self' 'unsafe-inline'",
+      "connect-src 'self'",
+    ].join('; '),
   });
   next();
 });

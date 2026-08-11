@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import multer from 'multer';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import pool from '../db.js';
-import { uploadFile, downloadFile, deleteFile, videoKey, thumbnailKey } from '../storage.js';
+import { uploadFileFromFilename, downloadStream, deleteFile } from '../storage.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
@@ -17,12 +22,27 @@ const ALLOWED_IMAGE_TYPES = new Set([
 
 const MAX_VIDEO_SIZE = 5 * 1024 * 1024 * 1024; // 5 GB
 const MAX_THUMB_SIZE = 10 * 1024 * 1024;        // 10 MB
+const TEMP_UPLOAD_DIR = path.join(os.tmpdir(), 'bloxdvids-uploads');
+fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
 
-const storage = multer.memoryStorage();
+const storage = multer.diskStorage({
+  destination: TEMP_UPLOAD_DIR,
+  filename: (_req, file, cb) => {
+    cb(null, `${crypto.randomUUID()}-${file.fieldname}`);
+  },
+});
 
 const upload = multer({
   storage,
-  limits: { fileSize: MAX_VIDEO_SIZE },
+  limits: {
+    fileSize: MAX_VIDEO_SIZE,
+    files: 2,
+    fields: 3,
+    parts: 5,
+    fieldNameSize: 100,
+    fieldSize: 100 * 1024,
+    headerPairs: 200,
+  },
   fileFilter(_req, file, cb) {
     if (file.fieldname === 'video' && ALLOWED_VIDEO_TYPES.has(file.mimetype)) {
       cb(null, true);
@@ -91,6 +111,25 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/videos/my/uploads — list the authenticated user's videos
+// This must be declared before /:id so "my" is not parsed as a video ID.
+router.get('/my/uploads', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
+              v.created_at, v.file_size, v.mime_type
+       FROM videos v
+       WHERE v.user_id = $1
+       ORDER BY v.created_at DESC`,
+      [req.session.userId]
+    );
+    res.json({ videos: result.rows.map(stripStorageKey) });
+  } catch (err) {
+    console.error('My uploads error:', err);
+    res.status(500).json({ error: 'Failed to load uploads' });
+  }
+});
+
 // GET /api/videos/:id — single video metadata
 router.get('/:id', async (req, res) => {
   try {
@@ -134,13 +173,29 @@ router.post(
     });
   },
   async (req, res) => {
+    let videoId = null;
+    let uploadedVideoKey = null;
+    let uploadedThumbnailKey = null;
+    const tempFiles = [];
     try {
       const videoFile = req.files?.video?.[0];
       if (!videoFile) return res.status(400).json({ error: 'Video file is required' });
+      tempFiles.push(videoFile.path);
 
       const { title, description } = req.body || {};
       if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
       if (title.trim().length > 255) return res.status(400).json({ error: 'Title too long (max 255 characters)' });
+      if (req.body?.content_policy_ack !== 'on') {
+        return res.status(400).json({ error: 'Please confirm that you have the rights to upload this content and that it follows our content rules' });
+      }
+
+      const thumbFile = req.files?.thumbnail?.[0];
+      if (thumbFile) {
+        tempFiles.push(thumbFile.path);
+        if (thumbFile.size > MAX_THUMB_SIZE) {
+          return res.status(413).json({ error: 'Thumbnail too large (max 10 MB)' });
+        }
+      }
 
       // Reserve a DB row first to get an ID for the storage key
       const { rows } = await pool.query(
@@ -156,7 +211,7 @@ router.post(
           videoFile.size,
         ]
       );
-      const videoId = rows[0].id;
+      videoId = rows[0].id;
 
       // Build storage keys
       const ext = videoFile.originalname.split('.').pop()?.toLowerCase() || 'mp4';
@@ -164,18 +219,15 @@ router.post(
       const vKey = `videos/${videoId}.${safeExt}`;
 
       // Upload video
-      await uploadFile(vKey, videoFile.buffer, videoFile.mimetype);
+      await uploadFileFromFilename(vKey, videoFile.path, videoFile.mimetype);
+      uploadedVideoKey = vKey;
 
       // Upload thumbnail if provided
       let tKey = null;
-      const thumbFile = req.files?.thumbnail?.[0];
       if (thumbFile) {
-        if (thumbFile.size > MAX_THUMB_SIZE) {
-          await pool.query('DELETE FROM videos WHERE id = $1', [videoId]);
-          return res.status(413).json({ error: 'Thumbnail too large (max 10 MB)' });
-        }
         tKey = `thumbnails/${videoId}.jpg`;
-        await uploadFile(tKey, thumbFile.buffer, thumbFile.mimetype);
+        await uploadFileFromFilename(tKey, thumbFile.path, thumbFile.mimetype);
+        uploadedThumbnailKey = tKey;
       }
 
       // Update row with real keys
@@ -189,7 +241,14 @@ router.post(
       });
     } catch (err) {
       console.error('Upload error:', err);
+      await Promise.allSettled([
+        uploadedVideoKey ? deleteFile(uploadedVideoKey) : Promise.resolve(),
+        uploadedThumbnailKey ? deleteFile(uploadedThumbnailKey) : Promise.resolve(),
+        videoId ? pool.query('DELETE FROM videos WHERE id = $1', [videoId]) : Promise.resolve(),
+      ]);
       res.status(500).json({ error: 'Upload failed' });
+    } finally {
+      await Promise.allSettled(tempFiles.map((file) => fsPromises.rm(file, { force: true })));
     }
   }
 );
@@ -233,36 +292,22 @@ router.get('/:id/stream', async (req, res) => {
     const video = result.rows[0];
     if (!video || video.storage_key === 'pending') return res.status(404).json({ error: 'Video not found' });
 
-    const buffer = await downloadFile(video.storage_key);
-    const total = buffer.length;
-    const rangeHeader = req.headers.range;
-
-    if (rangeHeader) {
-      const [startStr, endStr] = rangeHeader.replace(/bytes=/, '').split('-');
-      const start = parseInt(startStr, 10);
-      const end = endStr ? parseInt(endStr, 10) : Math.min(start + 1024 * 1024 - 1, total - 1);
-
-      if (start >= total || end >= total || start > end) {
-        return res.status(416).set('Content-Range', `bytes */${total}`).end();
-      }
-
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${total}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': end - start + 1,
-        'Content-Type': video.mime_type,
-        'Cache-Control': 'public, max-age=3600',
-      });
-      res.end(buffer.slice(start, end + 1));
-    } else {
-      res.writeHead(200, {
-        'Content-Length': total,
-        'Content-Type': video.mime_type,
-        'Accept-Ranges': 'bytes',
-        'Cache-Control': 'public, max-age=3600',
-      });
-      res.end(buffer);
-    }
+    // Stream directly from App Storage instead of buffering multi-GB files in RAM.
+    // The SDK does not expose byte-range downloads, so seeking is intentionally
+    // disabled rather than advertising incorrect range support.
+    const stream = downloadStream(video.storage_key);
+    res.writeHead(200, {
+      'Content-Length': video.file_size,
+      'Accept-Ranges': 'none',
+      'Content-Type': video.mime_type,
+      'Cache-Control': 'public, max-age=3600',
+    });
+    stream.on('error', (err) => {
+      console.error('Storage stream error:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Stream failed' });
+      else res.destroy(err);
+    });
+    stream.pipe(res);
   } catch (err) {
     console.error('Stream error:', err);
     res.status(500).json({ error: 'Stream failed' });
@@ -275,7 +320,7 @@ router.get('/:id/thumbnail', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).end();
 
-    const result = await pool.query('SELECT thumbnail_key FROM videos WHERE id = $1', [id]);
+    const result = await pool.query('SELECT thumbnail_key, thumbnail_mime_type FROM videos WHERE id = $1', [id]);
     const video = result.rows[0];
 
     if (!video?.thumbnail_key) {
@@ -283,33 +328,19 @@ router.get('/:id/thumbnail', async (req, res) => {
       return res.redirect('/placeholder-thumb.svg');
     }
 
-    const buffer = await downloadFile(video.thumbnail_key);
+    const stream = downloadStream(video.thumbnail_key);
     res.set({
-      'Content-Type': 'image/jpeg',
+      'Content-Type': video.thumbnail_mime_type || 'image/jpeg',
       'Cache-Control': 'public, max-age=86400',
     });
-    res.send(Buffer.from(buffer));
+    stream.on('error', () => {
+      if (!res.headersSent) res.redirect('/placeholder-thumb.svg');
+      else res.destroy();
+    });
+    stream.pipe(res);
   } catch (err) {
     console.error('Thumbnail error:', err);
     res.redirect('/placeholder-thumb.svg');
-  }
-});
-
-// GET /api/videos/my/uploads — list the authenticated user's videos
-router.get('/my/uploads', requireAuth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
-              v.created_at, v.file_size, v.mime_type
-       FROM videos v
-       WHERE v.user_id = $1
-       ORDER BY v.created_at DESC`,
-      [req.session.userId]
-    );
-    res.json({ videos: result.rows.map(stripStorageKey) });
-  } catch (err) {
-    console.error('My uploads error:', err);
-    res.status(500).json({ error: 'Failed to load uploads' });
   }
 });
 

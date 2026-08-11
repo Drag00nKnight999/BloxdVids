@@ -20,6 +20,17 @@ export async function uploadFile(key, buffer, contentType) {
   return key;
 }
 
+export async function uploadFileFromFilename(key, filename, contentType) {
+  const storage = getStorageClient();
+  const result = await storage.uploadFromFilename(key, filename, {
+    contentType,
+  });
+  if (!result.ok) {
+    throw new Error(`Storage upload failed: ${result.error?.message || 'Unknown error'}`);
+  }
+  return key;
+}
+
 export async function downloadFile(key) {
   const storage = getStorageClient();
   const result = await storage.downloadAsBytes(key);
@@ -27,6 +38,10 @@ export async function downloadFile(key) {
     throw new Error(`Storage download failed: ${result.error?.message || 'Unknown error'}`);
   }
   return result.value;
+}
+
+export function downloadStream(key) {
+  return getStorageClient().downloadAsStream(key);
 }
 
 export async function deleteFile(key) {

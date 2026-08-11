@@ -26,6 +26,7 @@ export async function initDb() {
       description TEXT DEFAULT '',
       storage_key VARCHAR(500) NOT NULL,
       thumbnail_key VARCHAR(500),
+      thumbnail_mime_type VARCHAR(100),
       mime_type VARCHAR(100) NOT NULL,
       file_size BIGINT NOT NULL,
       duration_seconds INTEGER,
@@ -37,5 +38,6 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id);
     CREATE INDEX IF NOT EXISTS idx_videos_created_at ON videos(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_videos_title ON videos USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '')));
+    ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_mime_type VARCHAR(100);
   `);
 }
