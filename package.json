@@ -1,5 +1,5 @@
 {
-  "name": "video-platform",
+  "name": "bloxdvids",
   "version": "1.0.0",
   "description": "Video upload and watching platform",
   "main": "server.js",

@@ -47,8 +47,14 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Static files
-app.use(express.static('public', { maxAge: '1d' }));
+// Static files — keep the preview shell fresh after edits.
+app.use(express.static('public', {
+  maxAge: 0,
+  etag: false,
+  setHeaders(res) {
+    res.setHeader('Cache-Control', 'no-store');
+  },
+}));
 
 // API routes
 app.use('/api/auth', authRoutes);
@@ -70,7 +76,7 @@ app.use((err, _req, res, _next) => {
 initDb()
   .then(() => {
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Video platform running on port ${PORT}`);
+      console.log(`BloxdVids running on port ${PORT}`);
     });
   })
   .catch((err) => {
