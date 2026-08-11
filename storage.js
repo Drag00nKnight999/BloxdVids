@@ -46,7 +46,7 @@ export function downloadStream(key) {
 
 export async function deleteFile(key) {
   const storage = getStorageClient();
-  const result = await storage.delete(key);
+  const result = await storage.delete(key, { ignoreNotFound: true });
   if (!result.ok) {
     throw new Error(`Storage delete failed: ${result.error?.message || 'Unknown error'}`);
   }

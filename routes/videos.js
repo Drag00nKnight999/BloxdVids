@@ -164,10 +164,14 @@ router.post(
       { name: 'thumbnail', maxCount: 1 },
     ])(req, res, (err) => {
       if (err) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(413).json({ error: 'Video file too large (max 5 GB)' });
-        }
-        return res.status(400).json({ error: err.message });
+        const partialFiles = Object.values(req.files || {}).flat();
+        Promise.allSettled(partialFiles.map((file) => fsPromises.rm(file.path, { force: true }))).finally(() => {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: 'Video file too large (max 5 GB)' });
+          }
+          return res.status(400).json({ error: err.message });
+        });
+        return;
       }
       next();
     });
@@ -176,11 +180,10 @@ router.post(
     let videoId = null;
     let uploadedVideoKey = null;
     let uploadedThumbnailKey = null;
-    const tempFiles = [];
+    const tempFiles = Object.values(req.files || {}).flat().map((file) => file.path);
     try {
       const videoFile = req.files?.video?.[0];
       if (!videoFile) return res.status(400).json({ error: 'Video file is required' });
-      tempFiles.push(videoFile.path);
 
       const { title, description } = req.body || {};
       if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
@@ -191,10 +194,16 @@ router.post(
 
       const thumbFile = req.files?.thumbnail?.[0];
       if (thumbFile) {
-        tempFiles.push(thumbFile.path);
         if (thumbFile.size > MAX_THUMB_SIZE) {
           return res.status(413).json({ error: 'Thumbnail too large (max 10 MB)' });
         }
+      }
+
+      if (!await hasValidFileSignature(videoFile.path, videoFile.mimetype, false)) {
+        return res.status(400).json({ error: 'The video file contents do not match its declared type' });
+      }
+      if (thumbFile && !await hasValidFileSignature(thumbFile.path, thumbFile.mimetype, true)) {
+        return res.status(400).json({ error: 'The thumbnail file contents do not match its declared type' });
       }
 
       // Reserve a DB row first to get an ID for the storage key
@@ -232,8 +241,8 @@ router.post(
 
       // Update row with real keys
       await pool.query(
-        'UPDATE videos SET storage_key = $1, thumbnail_key = $2 WHERE id = $3',
-        [vKey, tKey, videoId]
+        'UPDATE videos SET storage_key = $1, thumbnail_key = $2, thumbnail_mime_type = $3 WHERE id = $4',
+        [vKey, tKey, thumbFile?.mimetype || null, videoId]
       );
 
       res.status(201).json({
@@ -267,12 +276,17 @@ router.delete('/:id', requireAuth, async (req, res) => {
     if (!video) return res.status(404).json({ error: 'Video not found or you do not own it' });
 
     // Delete from storage (best-effort)
-    await Promise.allSettled([
-      video.storage_key && video.storage_key !== 'pending'
-        ? deleteFile(video.storage_key)
-        : Promise.resolve(),
-      video.thumbnail_key ? deleteFile(video.thumbnail_key) : Promise.resolve(),
-    ]);
+    try {
+      await Promise.all([
+        video.storage_key && video.storage_key !== 'pending'
+          ? deleteFile(video.storage_key)
+          : Promise.resolve(),
+        video.thumbnail_key ? deleteFile(video.thumbnail_key) : Promise.resolve(),
+      ]);
+    } catch (storageError) {
+      console.error('Delete storage error:', storageError);
+      return res.status(502).json({ error: 'Video storage is temporarily unavailable. Please try again.' });
+    }
 
     await pool.query('DELETE FROM videos WHERE id = $1', [id]);
     res.json({ success: true });
@@ -347,6 +361,34 @@ router.get('/:id/thumbnail', async (req, res) => {
 function stripStorageKey(video) {
   const { storage_key, ...rest } = video;
   return rest;
+}
+
+async function hasValidFileSignature(filename, mimeType, isImage) {
+  const handle = await fsPromises.open(filename, 'r');
+  try {
+    const header = Buffer.alloc(32);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    const bytes = header.subarray(0, bytesRead);
+
+    if (isImage) {
+      return (
+        (mimeType === 'image/jpeg' && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) ||
+        (mimeType === 'image/png' && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) ||
+        (mimeType === 'image/gif' && (bytes.subarray(0, 6).toString() === 'GIF87a' || bytes.subarray(0, 6).toString() === 'GIF89a')) ||
+        (mimeType === 'image/webp' && bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP')
+      );
+    }
+
+    return (
+      (mimeType === 'video/mp4' || mimeType === 'video/quicktime') && bytes.subarray(4, 8).toString() === 'ftyp' ||
+      (mimeType === 'video/webm' || mimeType === 'video/x-matroska') && bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) ||
+      mimeType === 'video/ogg' && bytes.subarray(0, 4).toString() === 'OggS' ||
+      mimeType === 'video/x-msvideo' && bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'AVI ' ||
+      mimeType === 'video/mpeg' && (bytes.subarray(0, 3).toString() === 'ID3' || bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x01)
+    );
+  } finally {
+    await handle.close();
+  }
 }
 
 export default router;

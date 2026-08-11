@@ -41,10 +41,15 @@ router.post('/register', async (req, res) => {
     );
 
     const user = result.rows[0];
-    req.session.userId = user.id;
-    req.session.username = user.username;
-
-    res.json({ user: { id: user.id, username: user.username, email: user.email } });
+    req.session.regenerate((err) => {
+      if (err) {
+        console.error('Registration session error:', err);
+        return res.status(500).json({ error: 'Registration failed' });
+      }
+      req.session.userId = user.id;
+      req.session.username = user.username;
+      res.json({ user: { id: user.id, username: user.username, email: user.email } });
+    });
   } catch (err) {
     if (err.code === '23505') {
       const field = err.detail?.includes('username') ? 'Username' : 'Email';
