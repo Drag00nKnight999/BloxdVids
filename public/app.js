@@ -16,6 +16,16 @@ export const api = {
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   },
+  async patch(url, body) {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  },
   async delete(url) {
     const res = await fetch(url, { method: 'DELETE' });
     const data = await res.json();
@@ -71,6 +81,8 @@ export async function initNav() {
     if (user) {
       nav.innerHTML = `
         <a href="/my-uploads.html" class="btn btn-ghost btn-sm">My Uploads</a>
+        ${user.role === 'owner' ? `<a href="/settings.html" class="btn btn-ghost btn-sm">${user.adminMode ? 'Owner mode' : 'Settings'}</a>` : ''}
+        ${user.adminMode ? '<a href="/admin.html" class="btn btn-primary btn-sm">Moderate</a>' : ''}
         <a href="/upload.html" class="btn btn-primary btn-sm">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Upload

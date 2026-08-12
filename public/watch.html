@@ -55,7 +55,10 @@ if (!videoId) {
 
   document.title = `${videoData.title} – BloxdVids`;
 
-  const isOwner = meData.user && meData.user.id === videoData.user_id;
+  const canManage = meData.user && (
+    meData.user.id === videoData.user_id ||
+    (meData.user.role === 'owner' && meData.user.adminMode)
+  );
   const related = (relatedData.videos || []).filter(v => v.id !== videoId).slice(0, 8);
 
   layout.innerHTML = `
@@ -74,7 +77,7 @@ if (!videoId) {
             · ${formatViews(videoData.view_count)} views
             · ${formatDate(videoData.created_at)}
           </span>
-          ${isOwner ? `<button class="btn btn-danger btn-sm" id="delete-btn">
+          ${canManage ? `<button class="btn btn-danger btn-sm" id="delete-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             Delete
           </button>` : ''}
@@ -95,7 +98,7 @@ if (!videoId) {
     </aside>
   `;
 
-  if (isOwner) {
+  if (canManage) {
     const deleteBtn = document.getElementById('delete-btn');
     const modal = document.getElementById('delete-modal');
     const cancelBtn = document.getElementById('cancel-delete');

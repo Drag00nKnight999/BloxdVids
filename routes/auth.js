@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../db.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
 const SALT_ROUNDS = 12;
@@ -11,6 +12,13 @@ function isValidUsername(u) {
 }
 function isValidPassword(p) {
   return typeof p === 'string' && p.length >= 8 && p.length <= 128;
+}
+
+function sessionUser(user, req) {
+  req.session.userId = user.id;
+  req.session.username = user.username;
+  req.session.role = user.role;
+  req.session.previewMode = user.preview_mode;
 }
 
 // POST /api/auth/register
@@ -28,9 +36,17 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be 8–128 characters' });
     }
 
+    const existing = await pool.query(
+      'SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1',
+      [username]
+    );
+    if (existing.rows[0]) {
+      return res.status(409).json({ error: 'Username is already taken' });
+    }
+
     const hash = await bcrypt.hash(password, SALT_ROUNDS);
     const result = await pool.query(
-      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username',
+      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, role, preview_mode',
       [username.toLowerCase(), hash]
     );
 
@@ -40,9 +56,8 @@ router.post('/register', async (req, res) => {
         console.error('Registration session error:', err);
         return res.status(500).json({ error: 'Registration failed' });
       }
-      req.session.userId = user.id;
-      req.session.username = user.username;
-      res.json({ user: { id: user.id, username: user.username } });
+      sessionUser(user, req);
+      res.json({ user: publicUser(user) });
     });
   } catch (err) {
     if (err.code === '23505') {
@@ -63,8 +78,8 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, username, password_hash FROM users WHERE username = $1',
-      [username.toLowerCase()]
+      'SELECT id, username, password_hash, role, preview_mode FROM users WHERE LOWER(username) = LOWER($1)',
+      [username]
     );
     const user = result.rows[0];
 
@@ -81,9 +96,8 @@ router.post('/login', async (req, res) => {
 
     req.session.regenerate((err) => {
       if (err) return res.status(500).json({ error: 'Login failed' });
-      req.session.userId = user.id;
-      req.session.username = user.username;
-      res.json({ user: { id: user.id, username: user.username } });
+      sessionUser(user, req);
+      res.json({ user: publicUser(user) });
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -105,7 +119,57 @@ router.get('/me', (req, res) => {
   if (!req.session?.userId) {
     return res.json({ user: null });
   }
-  res.json({ user: { id: req.session.userId, username: req.session.username } });
+  res.json({
+    user: {
+      id: req.session.userId,
+      username: req.session.username,
+      role: req.session.role || 'user',
+      previewMode: req.session.previewMode !== false,
+      adminMode: req.session.role === 'owner' && req.session.previewMode === false,
+    },
+  });
 });
+
+// GET /api/auth/settings
+router.get('/settings', requireAuth, async (req, res) => {
+  const result = await pool.query(
+    'SELECT username, role, preview_mode FROM users WHERE id = $1',
+    [req.session.userId]
+  );
+  const user = result.rows[0];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  req.session.role = user.role;
+  req.session.previewMode = user.preview_mode;
+  res.json({ user: publicUser(user) });
+});
+
+// PATCH /api/auth/settings/preview-mode
+router.patch('/settings/preview-mode', requireAuth, async (req, res) => {
+  if (req.session.role !== 'owner') {
+    return res.status(403).json({ error: 'Only the owner can change preview mode' });
+  }
+  const previewMode = req.body?.previewMode;
+  if (typeof previewMode !== 'boolean') {
+    return res.status(400).json({ error: 'previewMode must be a boolean' });
+  }
+
+  const result = await pool.query(
+    'UPDATE users SET preview_mode = $1 WHERE id = $2 RETURNING username, role, preview_mode',
+    [previewMode, req.session.userId]
+  );
+  const user = result.rows[0];
+  req.session.previewMode = user.preview_mode;
+  res.json({ user: publicUser(user) });
+});
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role || 'user',
+    previewMode: user.preview_mode !== false,
+    adminMode: user.role === 'owner' && user.preview_mode === false,
+  };
+}
 
 export default router;

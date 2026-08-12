@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Owner Moderation – BloxdVids</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+<nav class="navbar">
+  <a href="/" class="nav-logo">
+    <svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>
+    BloxdVids
+  </a>
+  <div class="nav-actions" id="nav-actions"></div>
+</nav>
+<div class="container page">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">Owner moderation</h2>
+      <p style="color:var(--text-muted);font-size:.875rem;margin-top:.25rem">Manage all videos while owner admin mode is enabled.</p>
+    </div>
+    <a href="/settings.html" class="btn btn-ghost btn-sm">Account settings</a>
+  </div>
+  <div id="admin-list"><div class="loader"><div class="spinner"></div></div></div>
+</div>
+<div id="toast-container"></div>
+<script type="module">
+import { api, toast, initNav, formatDate, formatViews, formatBytes } from '/app.js';
+initNav();
+const list = document.getElementById('admin-list');
+const me = await api.get('/api/auth/me');
+if (!me.user || !me.user.adminMode) {
+  window.location.href = me.user?.role === 'owner' ? '/settings.html' : '/login.html';
+} else {
+  const data = await api.get('/api/videos/manage');
+  if (!data.videos.length) {
+    list.innerHTML = '<div class="empty-state"><h3>No videos to moderate</h3><p>Uploaded videos will appear here.</p></div>';
+  } else {
+    list.innerHTML = data.videos.map(v => `
+      <div class="my-uploads-card">
+        <img class="my-uploads-thumb" src="/api/videos/${v.id}/thumbnail" alt="${esc(v.title)}"/>
+        <div class="my-uploads-info">
+          <p class="my-uploads-title">${esc(v.title)}</p>
+          <p class="my-uploads-meta">By ${esc(v.uploader)} · ${formatViews(v.view_count)} views · ${formatBytes(v.file_size)} · ${formatDate(v.created_at)}</p>
+          <div class="my-uploads-actions">
+            <a href="/watch.html?id=${v.id}" class="btn btn-ghost btn-sm">Watch</a>
+            <button class="btn btn-danger btn-sm" data-delete="${v.id}">Delete</button>
+          </div>
+        </div>
+      </div>`).join('');
+    list.querySelectorAll('[data-delete]').forEach(button => {
+      button.addEventListener('click', async () => {
+        if (!confirm('Delete this video permanently?')) return;
+        button.disabled = true;
+        try {
+          await api.delete(`/api/videos/${button.dataset.delete}`);
+          button.closest('.my-uploads-card').remove();
+          toast('Video deleted', 'success');
+        } catch (err) {
+          button.disabled = false;
+          toast(err.message || 'Delete failed', 'error');
+        }
+      });
+    });
+  }
+}
+function esc(value) {
+  return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

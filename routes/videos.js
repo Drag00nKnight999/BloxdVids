@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import pool from '../db.js';
 import { uploadFileFromFilename, downloadStream, deleteFile } from '../storage.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireOwnerAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -108,6 +108,22 @@ router.get('/', async (req, res) => {
   } catch (err) {
     console.error('List videos error:', err);
     res.status(500).json({ error: 'Failed to load videos' });
+  }
+});
+
+// GET /api/videos/manage — owner-only moderation list
+router.get('/manage', requireOwnerAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
+              v.created_at, v.file_size, v.mime_type, u.username AS uploader
+       FROM videos v JOIN users u ON u.id = v.user_id
+       ORDER BY v.created_at DESC`
+    );
+    res.json({ videos: result.rows.map(stripStorageKey) });
+  } catch (err) {
+    console.error('Manage videos error:', err);
+    res.status(500).json({ error: 'Failed to load moderation queue' });
   }
 });
 
@@ -268,9 +284,12 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid video ID' });
 
+    const isOwnerAdmin = req.session.role === 'owner' && req.session.previewMode === false;
     const result = await pool.query(
-      'SELECT * FROM videos WHERE id = $1 AND user_id = $2',
-      [id, req.session.userId]
+      isOwnerAdmin
+        ? 'SELECT * FROM videos WHERE id = $1'
+        : 'SELECT * FROM videos WHERE id = $1 AND user_id = $2',
+      isOwnerAdmin ? [id] : [id, req.session.userId]
     );
     const video = result.rows[0];
     if (!video) return res.status(404).json({ error: 'Video not found or you do not own it' });
