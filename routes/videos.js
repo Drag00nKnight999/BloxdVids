@@ -7,7 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import pool from '../db.js';
 import { uploadFileFromFilename, downloadStream, deleteFile } from '../storage.js';
-import { requireAuth, requireOwnerAdmin } from '../middleware/auth.js';
+import {
+  requireAuth, requireModeration, requireUploadAccess,
+  isOwnerAdmin, isModerator, isCurrentlyBanned, isCurrentlyRestricted,
+} from '../middleware/auth.js';
 
 const router = Router();
 
@@ -111,8 +114,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/videos/manage — owner-only moderation list
-router.get('/manage', requireOwnerAdmin, async (req, res) => {
+// GET /api/videos/manage — moderator/admin moderation list
+router.get('/manage', requireModeration, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
@@ -173,7 +176,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/videos — upload a new video (auth required)
 router.post(
   '/',
-  requireAuth,
+  requireUploadAccess,
   (req, res, next) => {
     upload.fields([
       { name: 'video', maxCount: 1 },
@@ -278,18 +281,22 @@ router.post(
   }
 );
 
-// DELETE /api/videos/:id — delete a video (auth required, owner only)
+// DELETE /api/videos/:id — owner deletion or moderator/admin content moderation
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid video ID' });
 
-    const isOwnerAdmin = req.session.role === 'owner' && req.session.previewMode === false;
+    if (isCurrentlyBanned(req.currentUser)
+      || (isCurrentlyRestricted(req.currentUser) && req.currentUser.restriction_type !== 'reporting')) {
+      return res.status(403).json({ error: 'Your account is currently restricted' });
+    }
+    const elevated = isOwnerAdmin(req.currentUser) || isModerator(req.currentUser);
     const result = await pool.query(
-      isOwnerAdmin
+      elevated
         ? 'SELECT * FROM videos WHERE id = $1'
         : 'SELECT * FROM videos WHERE id = $1 AND user_id = $2',
-      isOwnerAdmin ? [id] : [id, req.session.userId]
+      elevated ? [id] : [id, req.session.userId]
     );
     const video = result.rows[0];
     if (!video) return res.status(404).json({ error: 'Video not found or you do not own it' });

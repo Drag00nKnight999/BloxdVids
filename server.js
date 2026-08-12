@@ -4,6 +4,7 @@ import pgSession from 'connect-pg-simple';
 import pool, { initDb } from './db.js';
 import authRoutes from './routes/auth.js';
 import videoRoutes from './routes/videos.js';
+import platformRoutes from './routes/platform.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -77,6 +78,7 @@ app.use(express.static('public', {
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api/platform', platformRoutes);
 
 // SPA fallback — serve index.html for any unmatched browser routes.
 // Express 5 no longer accepts the legacy "*" path pattern.

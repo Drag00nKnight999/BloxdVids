@@ -16,8 +16,15 @@ export async function initDb() {
       id SERIAL PRIMARY KEY,
       username VARCHAR(50) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
-      role VARCHAR(20) NOT NULL DEFAULT 'user',
+      role VARCHAR(30) NOT NULL DEFAULT 'user',
       preview_mode BOOLEAN NOT NULL DEFAULT TRUE,
+      banned BOOLEAN NOT NULL DEFAULT FALSE,
+      ban_until TIMESTAMPTZ,
+      ban_reason TEXT,
+      restricted BOOLEAN NOT NULL DEFAULT FALSE,
+      restriction_until TIMESTAMPTZ,
+      restriction_type VARCHAR(30),
+      restriction_reason TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
@@ -42,9 +49,70 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_videos_title ON videos USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '')));
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
     ALTER TABLE users DROP COLUMN IF EXISTS email;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user';
+    ALTER TABLE users ALTER COLUMN role TYPE VARCHAR(30);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(30) NOT NULL DEFAULT 'user';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS preview_mode BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_until TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_reason TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS restricted BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS restriction_until TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS restriction_type VARCHAR(30);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS restriction_reason TEXT;
     ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_mime_type VARCHAR(100);
+
+    CREATE TABLE IF NOT EXISTS reports (
+      id SERIAL PRIMARY KEY,
+      reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reported_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      video_id INTEGER REFERENCES videos(id) ON DELETE SET NULL,
+      category VARCHAR(40) NOT NULL,
+      details TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'open',
+      resolution_note TEXT,
+      reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      CHECK (reported_user_id IS NOT NULL OR video_id IS NOT NULL)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS appeals (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reason TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'open',
+      reviewer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      decision_note TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS bug_reports (
+      id SERIAL PRIMARY KEY,
+      reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      title VARCHAR(200) NOT NULL,
+      description TEXT NOT NULL,
+      steps_to_reproduce TEXT DEFAULT '',
+      severity VARCHAR(20) NOT NULL DEFAULT 'normal',
+      status VARCHAR(20) NOT NULL DEFAULT 'open',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_bug_reports_status ON bug_reports(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS crash_logs (
+      id SERIAL PRIMARY KEY,
+      reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      message VARCHAR(500) NOT NULL,
+      stack TEXT DEFAULT '',
+      page_url VARCHAR(1000) DEFAULT '',
+      user_agent VARCHAR(500) DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_crash_logs_created_at ON crash_logs(created_at DESC);
   `);
 
   await seedOwnerAccount();

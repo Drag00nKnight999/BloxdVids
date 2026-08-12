@@ -21,6 +21,26 @@ function sessionUser(user, req) {
   req.session.previewMode = user.preview_mode;
 }
 
+function publicUser(user) {
+  const banned = user.banned === true
+    && (!user.ban_until || new Date(user.ban_until) > new Date());
+  const restricted = user.restricted === true
+    && (!user.restriction_until || new Date(user.restriction_until) > new Date());
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role || 'user',
+    previewMode: user.preview_mode !== false,
+    adminMode: user.role === 'owner' && user.preview_mode === false,
+    banned,
+    restricted,
+    banReason: banned ? user.ban_reason : null,
+    restrictionType: restricted ? user.restriction_type : null,
+    restrictionReason: restricted ? user.restriction_reason : null,
+    betaAccess: user.role === 'beta_tester',
+  };
+}
+
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
@@ -46,7 +66,10 @@ router.post('/register', async (req, res) => {
 
     const hash = await bcrypt.hash(password, SALT_ROUNDS);
     const result = await pool.query(
-      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, role, preview_mode',
+      `INSERT INTO users (username, password_hash)
+       VALUES ($1, $2)
+       RETURNING id, username, role, preview_mode, banned, ban_until, ban_reason,
+       restricted, restriction_until, restriction_type, restriction_reason`,
       [username.toLowerCase(), hash]
     );
 
@@ -78,7 +101,9 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, username, password_hash, role, preview_mode FROM users WHERE LOWER(username) = LOWER($1)',
+      `SELECT id, username, password_hash, role, preview_mode, banned, ban_until, ban_reason,
+              restricted, restriction_until, restriction_type, restriction_reason
+       FROM users WHERE LOWER(username) = LOWER($1)`,
       [username]
     );
     const user = result.rows[0];
@@ -119,21 +144,28 @@ router.get('/me', (req, res) => {
   if (!req.session?.userId) {
     return res.json({ user: null });
   }
-  res.json({
-    user: {
-      id: req.session.userId,
-      username: req.session.username,
-      role: req.session.role || 'user',
-      previewMode: req.session.previewMode !== false,
-      adminMode: req.session.role === 'owner' && req.session.previewMode === false,
-    },
+  pool.query(
+    `SELECT id, username, role, preview_mode, banned, ban_until, ban_reason,
+            restricted, restriction_until, restriction_type, restriction_reason
+     FROM users WHERE id = $1`,
+    [req.session.userId]
+  ).then((result) => {
+    const user = result.rows[0];
+    if (!user) return res.json({ user: null });
+    sessionUser(user, req);
+    res.json({ user: publicUser(user) });
+  }).catch((err) => {
+    console.error('Session user error:', err);
+    res.status(500).json({ error: 'Failed to load account' });
   });
 });
 
 // GET /api/auth/settings
 router.get('/settings', requireAuth, async (req, res) => {
   const result = await pool.query(
-    'SELECT username, role, preview_mode FROM users WHERE id = $1',
+    `SELECT id, username, role, preview_mode, banned, ban_until, ban_reason,
+            restricted, restriction_until, restriction_type, restriction_reason
+     FROM users WHERE id = $1`,
     [req.session.userId]
   );
   const user = result.rows[0];
@@ -154,22 +186,14 @@ router.patch('/settings/preview-mode', requireAuth, async (req, res) => {
   }
 
   const result = await pool.query(
-    'UPDATE users SET preview_mode = $1 WHERE id = $2 RETURNING username, role, preview_mode',
+    `UPDATE users SET preview_mode = $1 WHERE id = $2
+     RETURNING id, username, role, preview_mode, banned, ban_until, ban_reason,
+     restricted, restriction_until, restriction_type, restriction_reason`,
     [previewMode, req.session.userId]
   );
   const user = result.rows[0];
   req.session.previewMode = user.preview_mode;
   res.json({ user: publicUser(user) });
 });
-
-function publicUser(user) {
-  return {
-    id: user.id,
-    username: user.username,
-    role: user.role || 'user',
-    previewMode: user.preview_mode !== false,
-    adminMode: user.role === 'owner' && user.preview_mode === false,
-  };
-}
 
 export default router;
