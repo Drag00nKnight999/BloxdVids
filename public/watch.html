@@ -57,7 +57,7 @@ if (!videoId) {
 
   const canManage = meData.user && (
     meData.user.id === videoData.user_id ||
-    (meData.user.role === 'owner' && meData.user.adminMode)
+    meData.user.canModerate
   );
   const related = (relatedData.videos || []).filter(v => v.id !== videoId).slice(0, 8);
 
@@ -77,10 +77,11 @@ if (!videoId) {
             · ${formatViews(videoData.view_count)} views
             · ${formatDate(videoData.created_at)}
           </span>
-          ${canManage ? `<button class="btn btn-danger btn-sm" id="delete-btn">
+        ${canManage ? `<button class="btn btn-danger btn-sm" id="delete-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             Delete
           </button>` : ''}
+          ${meData.user && meData.user.id !== videoData.user_id ? '<button class="btn btn-ghost btn-sm" id="report-btn">Report</button>' : ''}
         </div>
         ${videoData.description ? `<p class="video-description">${escHtml(videoData.description)}</p>` : ''}
       </div>
@@ -123,6 +124,20 @@ if (!videoId) {
       }
     });
   }
+  document.getElementById('report-btn')?.addEventListener('click', async () => {
+    const details = prompt('What is wrong with this video?');
+    if (!details) return;
+    try {
+      await api.post('/api/platform/reports', {
+        videoId,
+        category: 'community_guidelines',
+        details,
+      });
+      toast('Report submitted', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not submit report', 'error');
+    }
+  });
 }
 
 function escHtml(s) {

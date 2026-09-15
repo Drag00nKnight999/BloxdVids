@@ -66,6 +66,21 @@ export function formatBytes(b) {
   return (b / 1024 ** 3).toFixed(2) + ' GB';
 }
 
+export function roleLabel(role) {
+  return ({
+    owner: 'Owner',
+    admin: 'Admin',
+    moderator: 'Moderator',
+    developer: 'Developer',
+    beta_tester: 'Beta Tester',
+    bug_hunter: 'Bug Hunter',
+    contributor: 'Contributor',
+    booster: 'Booster',
+    og_user: 'OG User',
+    user: 'User',
+  })[role] || 'User';
+}
+
 function escHtml(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -81,8 +96,12 @@ export async function initNav() {
     if (user) {
       nav.innerHTML = `
         <a href="/my-uploads.html" class="btn btn-ghost btn-sm">My Uploads</a>
+        <a href="/channel.html?handle=${encodeURIComponent(user.username)}" class="btn btn-ghost btn-sm">Channel</a>
+        <a href="/bug-report.html" class="btn btn-ghost btn-sm">Report bug</a>
+        ${(user.banned || user.restricted) ? '<a href="/appeal.html" class="btn btn-ghost btn-sm">Appeal</a>' : ''}
         ${user.role === 'owner' ? `<a href="/settings.html" class="btn btn-ghost btn-sm">${user.adminMode ? 'Owner mode' : 'Settings'}</a>` : ''}
-        ${user.adminMode ? '<a href="/admin.html" class="btn btn-primary btn-sm">Moderate</a>' : ''}
+        ${user.canModerate ? '<a href="/admin.html" class="btn btn-primary btn-sm">Moderate</a>' : ''}
+        ${user.canViewDeveloperTools ? '<a href="/developer.html" class="btn btn-ghost btn-sm">Developer</a>' : ''}
         <a href="/upload.html" class="btn btn-primary btn-sm">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Upload
@@ -167,7 +186,7 @@ function videoCard(v) {
       <div class="video-info">
         <p class="video-title">${escHtml(v.title)}</p>
         <div class="video-meta">
-          <span>${escHtml(v.uploader)}</span>
+           <span>${v.channel_handle ? `<a href="/channel.html?handle=${encodeURIComponent(v.channel_handle)}" onclick="event.stopPropagation()">${escHtml(v.channel_name || v.uploader)}</a>` : escHtml(v.uploader)}</span>
           <span>${formatViews(v.view_count)} views</span>
           <span>${formatDate(v.created_at)}</span>
         </div>

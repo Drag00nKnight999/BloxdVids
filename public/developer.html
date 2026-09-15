@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Developer tools – BloxdVids</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+<nav class="navbar">
+  <a href="/" class="nav-logo"><svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2 2 7.373 2 14z"/></svg>BloxdVids</a>
+  <div class="nav-actions" id="nav-actions"></div>
+</nav>
+<main class="container page">
+  <div class="section-header"><div><h1>Developer tools</h1><p style="color:var(--text-muted)">Bug reports and crash logs. This area does not include moderation controls.</p></div></div>
+  <section><h2 class="section-title">Bug reports</h2><div id="bugs"><div class="loader"><div class="spinner"></div></div></div></section>
+  <section style="margin-top:2rem"><h2 class="section-title">Crash logs</h2><div id="crashes"><div class="loader"><div class="spinner"></div></div></div></section>
+</main>
+<div id="toast-container"></div>
+<script type="module">
+import { api, initNav, formatDate } from '/app.js';
+initNav();
+const me = await api.get('/api/auth/me');
+if (!me.user?.canViewDeveloperTools) location.href = me.user ? '/' : '/login.html';
+else {
+  const [bugs, crashes] = await Promise.all([api.get('/api/platform/bugs'), api.get('/api/platform/crashes')]);
+  document.getElementById('bugs').innerHTML = bugs.bugs.length ? bugs.bugs.map(b => `<div class="my-uploads-card"><div class="my-uploads-info"><p class="my-uploads-title">${esc(b.title)}</p><p class="my-uploads-meta">${esc(b.severity)} · ${esc(b.status)} · ${esc(b.reporter || 'Anonymous')} · ${formatDate(b.created_at)}</p><p>${esc(b.description)}</p><p style="color:var(--text-muted);margin-top:.4rem">${esc(b.steps_to_reproduce || '')}</p><select class="form-control bug-status" data-id="${b.id}" style="max-width:180px;margin-top:.75rem">${['open','triaged','in_progress','fixed','wont_fix'].map(s => `<option ${s === b.status ? 'selected' : ''}>${s}</option>`).join('')}</select></div></div>`).join('') : '<p style="color:var(--text-muted);margin-top:.75rem">No bug reports.</p>';
+  document.getElementById('crashes').innerHTML = crashes.crashes.length ? crashes.crashes.map(c => `<div class="my-uploads-card"><div class="my-uploads-info"><p class="my-uploads-title">${esc(c.message)}</p><p class="my-uploads-meta">${esc(c.reporter || 'Anonymous')} · ${formatDate(c.created_at)} · ${esc(c.page_url || '')}</p><pre style="white-space:pre-wrap;color:var(--text-muted);max-height:180px;overflow:auto">${esc(c.stack || '')}</pre></div></div>`).join('') : '<p style="color:var(--text-muted);margin-top:.75rem">No crash logs.</p>';
+  document.querySelectorAll('.bug-status').forEach(select => select.addEventListener('change', async () => {
+    await api.patch(`/api/platform/bugs/${select.dataset.id}`, { status: select.value });
+  }));
+}
+function esc(value) { return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+</script>
+</body>
+</html>

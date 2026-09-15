@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Channel – BloxdVids</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+<nav class="navbar">
+  <a href="/" class="nav-logo"><svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>BloxdVids</a>
+  <div class="nav-actions" id="nav-actions"></div>
+</nav>
+<main class="container page">
+  <div id="channel-header"><div class="loader"><div class="spinner"></div></div></div>
+  <div id="channel-videos"></div>
+</main>
+<div id="toast-container"></div>
+<script type="module">
+import { api, toast, initNav, formatDate, formatViews, formatBytes } from '/app.js';
+initNav();
+const handle = new URLSearchParams(location.search).get('handle');
+const header = document.getElementById('channel-header');
+const videosEl = document.getElementById('channel-videos');
+if (!handle) {
+  header.innerHTML = '<div class="empty-state"><h3>Channel not found</h3></div>';
+} else {
+  try {
+    const [channelData, videoData, meData] = await Promise.all([
+      api.get(`/api/channels/${encodeURIComponent(handle)}`),
+      api.get(`/api/channels/${encodeURIComponent(handle)}/videos`),
+      api.get('/api/auth/me'),
+    ]);
+    const channel = channelData.channel;
+    document.title = `${channel.name} – BloxdVids`;
+    const isOwner = meData.user?.id === channel.user_id;
+    header.innerHTML = `
+      <section style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2rem;margin-bottom:2rem">
+        <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap">
+          <div><h1>${esc(channel.name)}</h1><p style="color:var(--text-muted)">@${esc(channel.handle)} · ${channel.subscriber_count} subscribers</p>
+          <p style="color:var(--text-muted);max-width:680px;margin-top:.75rem">${esc(channel.description || 'No channel description yet.')}</p></div>
+          <div style="display:flex;gap:.5rem">
+            ${meData.user && !isOwner ? `<button class="btn ${channel.subscribed ? 'btn-ghost' : 'btn-primary'}" id="subscribe">${channel.subscribed ? 'Subscribed' : 'Subscribe'}</button>` : ''}
+            ${isOwner ? '<button class="btn btn-ghost" id="edit-channel">Edit channel</button>' : ''}
+          </div>
+        </div>
+        ${isOwner ? `<form id="edit-form" style="display:none;margin-top:1.25rem">
+          <input class="form-control" id="channel-name" maxlength="100" value="${escAttr(channel.name)}" placeholder="Channel name" required/>
+          <textarea class="form-control" id="channel-description" maxlength="1000" placeholder="Describe your channel" style="margin-top:.75rem;min-height:100px">${esc(channel.description || '')}</textarea>
+          <button class="btn btn-primary" style="margin-top:.75rem">Save channel</button>
+        </form>` : ''}
+      </section>`;
+    videosEl.innerHTML = `<div class="section-header"><h2 class="section-title">Videos</h2></div>
+      ${videoData.videos.length ? `<div class="video-grid">${videoData.videos.map(videoCard).join('')}</div>` : '<div class="empty-state"><h3>No videos yet</h3><p>This channel has not uploaded anything.</p></div>'}`;
+    document.getElementById('subscribe')?.addEventListener('click', async (event) => {
+      const subscribed = channel.subscribed;
+      const result = await (subscribed
+        ? api.delete(`/api/channels/${encodeURIComponent(handle)}/subscribe`)
+        : api.post(`/api/channels/${encodeURIComponent(handle)}/subscribe`, {}));
+      channel.subscribed = result.subscribed;
+      event.target.textContent = result.subscribed ? 'Subscribed' : 'Subscribe';
+      event.target.className = `btn ${result.subscribed ? 'btn-ghost' : 'btn-primary'}`;
+      toast(result.subscribed ? 'Subscribed to channel' : 'Unsubscribed', 'success');
+    });
+    document.getElementById('edit-channel')?.addEventListener('click', () => {
+      const form = document.getElementById('edit-form');
+      form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    });
+    document.getElementById('edit-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await api.patch('/api/channels/me', {
+        name: document.getElementById('channel-name').value,
+        description: document.getElementById('channel-description').value,
+      });
+      toast('Channel updated', 'success');
+      setTimeout(() => location.reload(), 400);
+    });
+  } catch (err) {
+    header.innerHTML = `<div class="empty-state"><h3>Channel unavailable</h3><p>${esc(err.message)}</p></div>`;
+  }
+}
+function videoCard(video) {
+  return `<article class="video-card" onclick="location.href='/watch.html?id=${video.id}'">
+    <div class="video-thumb"><img src="/api/videos/${video.id}/thumbnail" alt="${esc(video.title)}" loading="lazy"/></div>
+    <div class="video-info"><p class="video-title">${esc(video.title)}</p>
+    <div class="video-meta"><span>${formatViews(video.view_count)} views</span><span>${formatDate(video.created_at)}</span><span>${formatBytes(video.file_size)}</span></div></div>
+  </article>`;
+}
+function esc(value) { return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function escAttr(value) { return esc(value); }
+</script>
+</body>
+</html>

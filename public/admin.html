@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Owner Moderation – BloxdVids</title>
+  <title>Moderation – BloxdVids</title>
   <link rel="stylesheet" href="/style.css"/>
 </head>
 <body>
@@ -17,8 +17,8 @@
 <div class="container page">
   <div class="section-header">
     <div>
-      <h2 class="section-title">Owner moderation</h2>
-      <p style="color:var(--text-muted);font-size:.875rem;margin-top:.25rem">Manage all videos while owner admin mode is enabled.</p>
+      <h2 class="section-title">Moderation center</h2>
+      <p style="color:var(--text-muted);font-size:.875rem;margin-top:.25rem">Review content, reports, appeals, and account restrictions.</p>
     </div>
     <a href="/settings.html" class="btn btn-ghost btn-sm">Account settings</a>
   </div>
@@ -30,7 +30,7 @@ import { api, toast, initNav, formatDate, formatViews, formatBytes } from '/app.
 initNav();
 const list = document.getElementById('admin-list');
 const me = await api.get('/api/auth/me');
-if (!me.user || !me.user.adminMode) {
+if (!me.user || !me.user.canModerate) {
   window.location.href = me.user?.role === 'owner' ? '/settings.html' : '/login.html';
 } else {
   const data = await api.get('/api/videos/manage');
@@ -64,9 +64,81 @@ if (!me.user || !me.user.adminMode) {
       });
     });
   }
+  const reports = await api.get('/api/platform/reports');
+  const appeals = await api.get('/api/platform/appeals');
+  const sections = document.createElement('div');
+  sections.innerHTML = `
+    <section style="margin-top:2rem">
+      <div class="section-header"><h2 class="section-title">Reports (${reports.reports.length})</h2></div>
+      <div id="reports-list">${reports.reports.length ? reports.reports.map(reportRow).join('') : '<p style="color:var(--text-muted)">No reports.</p>'}</div>
+    </section>
+    <section style="margin-top:2rem">
+      <div class="section-header"><h2 class="section-title">Appeals (${appeals.appeals.length})</h2></div>
+      <div id="appeals-list">${appeals.appeals.length ? appeals.appeals.map(appealRow).join('') : '<p style="color:var(--text-muted)">No appeals.</p>'}</div>
+    </section>
+  `;
+  document.querySelector('.container.page').appendChild(sections);
+  sections.querySelectorAll('[data-report-status]').forEach(button => button.addEventListener('click', async () => {
+    await api.patch(`/api/platform/reports/${button.dataset.reportStatus}`, { status: button.dataset.nextStatus, resolutionNote: '' });
+    button.closest('.my-uploads-card').remove();
+    toast('Report updated', 'success');
+  }));
+  sections.querySelectorAll('[data-appeal-status]').forEach(button => button.addEventListener('click', async () => {
+    await api.patch(`/api/platform/appeals/${button.dataset.appealStatus}`, { status: button.dataset.nextStatus, decisionNote: '' });
+    button.closest('.my-uploads-card').remove();
+    toast('Appeal updated', 'success');
+  }));
+  if (me.user.canManagePlatform) await renderUsers(document.querySelector('.container.page'));
 }
 function esc(value) {
   return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function reportRow(report) {
+  return `<div class="my-uploads-card">
+    <div class="my-uploads-info"><p class="my-uploads-title">${esc(report.category)}${report.video_title ? ` · ${esc(report.video_title)}` : ''}</p>
+    <p class="my-uploads-meta">Reported by ${esc(report.reporter)}${report.reported_user ? ` · ${esc(report.reported_user)}` : ''} · ${esc(report.status)}</p>
+    <p style="margin:.5rem 0">${esc(report.details)}</p>
+    ${report.status === 'open' ? `<button class="btn btn-ghost btn-sm" data-report-status="${report.id}" data-next-status="resolved">Resolve</button>
+    <button class="btn btn-ghost btn-sm" data-report-status="${report.id}" data-next-status="dismissed">Dismiss</button>` : ''}</div></div>`;
+}
+function appealRow(appeal) {
+  return `<div class="my-uploads-card"><div class="my-uploads-info">
+    <p class="my-uploads-title">${esc(appeal.username)} · ${esc(appeal.role)}</p>
+    <p class="my-uploads-meta">${esc(appeal.status)} · ${formatDate(appeal.created_at)}</p>
+    <p style="margin:.5rem 0">${esc(appeal.reason)}</p>
+    ${appeal.status === 'open' ? `<button class="btn btn-primary btn-sm" data-appeal-status="${appeal.id}" data-next-status="resolved">Approve appeal</button>
+    <button class="btn btn-ghost btn-sm" data-appeal-status="${appeal.id}" data-next-status="dismissed">Dismiss</button>` : ''}</div></div>`;
+}
+async function renderUsers(page) {
+  const data = await api.get('/api/platform/users');
+  const section = document.createElement('section');
+  section.style.marginTop = '2rem';
+  section.innerHTML = `<div class="section-header"><h2 class="section-title">Platform users</h2></div>
+    <div id="users-list">${data.users.map(userRow).join('')}</div>`;
+  page.appendChild(section);
+  section.querySelectorAll('[data-role-user]').forEach(select => select.addEventListener('change', async () => {
+    await api.patch(`/api/platform/users/${select.dataset.roleUser}/role`, { role: select.value });
+    toast('Role updated', 'success');
+  }));
+  section.querySelectorAll('[data-user-action]').forEach(button => button.addEventListener('click', async () => {
+    const reason = prompt('Reason for this action:');
+    if (!reason) return;
+    const action = button.dataset.userAction;
+    await api.patch(`/api/platform/users/${button.dataset.userId}/status`, { action, reason, duration: 'permanent' });
+    toast('Account status updated', 'success');
+    window.location.reload();
+  }));
+}
+function userRow(user) {
+  const protectedUser = user.role === 'owner' || user.id === me.user.id;
+  const roles = ['admin','moderator','developer','beta_tester','bug_hunter','contributor','booster','og_user','user'];
+  return `<div class="my-uploads-card"><div class="my-uploads-info">
+    <p class="my-uploads-title">${esc(user.username)} <span style="color:var(--text-muted)">(${esc(user.role)})</span></p>
+    <p class="my-uploads-meta">${user.banned ? 'Banned' : user.restricted ? `Restricted: ${esc(user.restriction_type)}` : 'Active'}</p>
+    ${protectedUser ? '<span style="color:var(--text-muted)">Protected account</span>' : `<select class="form-control" data-role-user="${user.id}" style="max-width:220px;display:inline-block">${roles.map(role => `<option value="${role}" ${role === user.role ? 'selected' : ''}>${role}</option>`).join('')}</select>
+      <button class="btn btn-danger btn-sm" data-user-action="${user.banned ? 'unban' : 'ban'}" data-user-id="${user.id}">${user.banned ? 'Unban' : 'Ban'}</button>
+      <button class="btn btn-ghost btn-sm" data-user-action="${user.restricted ? 'unrestrict' : 'restrict'}" data-user-id="${user.id}">${user.restricted ? 'Remove restriction' : 'Restrict uploads'}</button>`}
+  </div></div>`;
 }
 </script>
 </body>

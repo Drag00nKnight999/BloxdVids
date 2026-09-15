@@ -15,6 +15,7 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       username VARCHAR(50) UNIQUE NOT NULL,
+      email VARCHAR(320),
       password_hash VARCHAR(255) NOT NULL,
       role VARCHAR(30) NOT NULL DEFAULT 'user',
       preview_mode BOOLEAN NOT NULL DEFAULT TRUE,
@@ -48,7 +49,8 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_videos_created_at ON videos(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_videos_title ON videos USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '')));
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
-    ALTER TABLE users DROP COLUMN IF EXISTS email;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(320);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email)) WHERE email IS NOT NULL;
     ALTER TABLE users ALTER COLUMN role TYPE VARCHAR(30);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(30) NOT NULL DEFAULT 'user';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS preview_mode BOOLEAN NOT NULL DEFAULT TRUE;
@@ -60,6 +62,26 @@ export async function initDb() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS restriction_type VARCHAR(30);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS restriction_reason TEXT;
     ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_mime_type VARCHAR(100);
+
+    CREATE TABLE IF NOT EXISTS channels (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      handle VARCHAR(30) NOT NULL UNIQUE,
+      name VARCHAR(100) NOT NULL,
+      description VARCHAR(1000) NOT NULL DEFAULT '',
+      subscriber_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_handle_lower ON channels (LOWER(handle));
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      subscriber_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (subscriber_id, channel_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_subscriptions_channel ON subscriptions(channel_id);
 
     CREATE TABLE IF NOT EXISTS reports (
       id SERIAL PRIMARY KEY,
@@ -135,12 +157,23 @@ async function seedOwnerAccount() {
       'UPDATE users SET username = $1, role = $2 WHERE id = $3',
       [ownerUsername, 'owner', existing.rows[0].id]
     );
+    await ensureChannel(existing.rows[0].id, ownerUsername);
     return;
   }
 
   const passwordHash = await bcrypt.hash(ownerPassword, 12);
-  await pool.query(
-    'INSERT INTO users (username, password_hash, role, preview_mode) VALUES ($1, $2, $3, $4)',
+  const inserted = await pool.query(
+    'INSERT INTO users (username, password_hash, role, preview_mode) VALUES ($1, $2, $3, $4) RETURNING id',
     [ownerUsername, passwordHash, 'owner', true]
+  );
+  await ensureChannel(inserted.rows[0].id, ownerUsername);
+}
+
+async function ensureChannel(userId, username) {
+  await pool.query(
+    `INSERT INTO channels (user_id, handle, name)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id) DO NOTHING`,
+    [userId, username.toLowerCase(), username]
   );
 }

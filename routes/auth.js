@@ -13,6 +13,11 @@ function isValidUsername(u) {
 function isValidPassword(p) {
   return typeof p === 'string' && p.length >= 8 && p.length <= 128;
 }
+function isValidEmail(value) {
+  return typeof value === 'string'
+    && value.length <= 320
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
 
 function sessionUser(user, req) {
   req.session.userId = user.id;
@@ -38,16 +43,24 @@ function publicUser(user) {
     restrictionType: restricted ? user.restriction_type : null,
     restrictionReason: restricted ? user.restriction_reason : null,
     betaAccess: user.role === 'beta_tester',
+    canModerate: user.role === 'moderator'
+      || user.role === 'admin'
+      || (user.role === 'owner' && user.preview_mode === false),
+    canManagePlatform: user.role === 'admin'
+      || (user.role === 'owner' && user.preview_mode === false),
+    canViewDeveloperTools: user.role === 'developer'
+      || user.role === 'admin'
+      || (user.role === 'owner' && user.preview_mode === false),
   };
 }
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { username, password } = req.body || {};
+    const { username, email, password } = req.body || {};
 
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'Username, email, and password are required' });
     }
     if (!isValidUsername(username)) {
       return res.status(400).json({ error: 'Username must be 3–30 characters and contain only letters, numbers, or underscores' });
@@ -55,10 +68,13 @@ router.post('/register', async (req, res) => {
     if (!isValidPassword(password)) {
       return res.status(400).json({ error: 'Password must be 8–128 characters' });
     }
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Enter a valid email address' });
+    }
 
     const existing = await pool.query(
-      'SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1',
-      [username]
+      'SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2) LIMIT 1',
+      [username, email]
     );
     if (existing.rows[0]) {
       return res.status(409).json({ error: 'Username is already taken' });
@@ -66,11 +82,11 @@ router.post('/register', async (req, res) => {
 
     const hash = await bcrypt.hash(password, SALT_ROUNDS);
     const result = await pool.query(
-      `INSERT INTO users (username, password_hash)
-       VALUES ($1, $2)
+      `INSERT INTO users (username, email, password_hash)
+       VALUES ($1, $2, $3)
        RETURNING id, username, role, preview_mode, banned, ban_until, ban_reason,
        restricted, restriction_until, restriction_type, restriction_reason`,
-      [username.toLowerCase(), hash]
+      [username.toLowerCase(), email.toLowerCase(), hash]
     );
 
     const user = result.rows[0];
@@ -94,17 +110,19 @@ router.post('/register', async (req, res) => {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body || {};
+    const { identifier, username, email, password } = req.body || {};
+    const loginIdentifier = identifier || username || email;
 
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    if (!loginIdentifier || !password) {
+      return res.status(400).json({ error: 'Email or username and password are required' });
     }
 
     const result = await pool.query(
       `SELECT id, username, password_hash, role, preview_mode, banned, ban_until, ban_reason,
               restricted, restriction_until, restriction_type, restriction_reason
-       FROM users WHERE LOWER(username) = LOWER($1)`,
-      [username]
+       FROM users WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
+       ORDER BY id ASC LIMIT 1`,
+      [loginIdentifier]
     );
     const user = result.rows[0];
 

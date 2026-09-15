@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Account appeal – BloxdVids</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+<nav class="navbar"><a href="/" class="nav-logo"><svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2 2 7.373 2 14z"/></svg>BloxdVids</a><div class="nav-actions" id="nav-actions"></div></nav>
+<main class="auth-page"><div class="auth-card"><h1>Appeal an account action</h1><p class="subtitle">Explain why your ban or restriction should be reviewed.</p>
+  <div class="form-error" id="error"></div><div class="form-success" id="success"></div>
+  <form id="appeal-form"><div class="form-group"><label for="reason">Appeal reason</label><textarea class="form-control" id="reason" maxlength="3000" required style="min-height:160px"></textarea></div><button class="btn btn-primary" style="width:100%">Submit appeal</button></form>
+</div></main>
+<div id="toast-container"></div>
+<script type="module">
+import { api, initNav } from '/app.js';
+initNav();
+const me = await api.get('/api/auth/me');
+if (!me.user) location.href = '/login.html';
+document.getElementById('appeal-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await api.post('/api/platform/appeals', { reason: document.getElementById('reason').value });
+    document.getElementById('success').textContent = 'Appeal submitted for review.';
+    document.getElementById('success').classList.add('show');
+    event.target.reset();
+  } catch (err) {
+    document.getElementById('error').textContent = err.message;
+    document.getElementById('error').classList.add('show');
+  }
+});
+</script>
+</body>
+</html>

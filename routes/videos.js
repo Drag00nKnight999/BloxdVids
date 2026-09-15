@@ -69,12 +69,13 @@ router.get('/', async (req, res) => {
     if (q && q.trim()) {
       const search = q.trim();
       query = `
-        SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
-               v.created_at, v.file_size, v.mime_type,
-               u.username AS uploader,
+         SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
+                v.created_at, v.file_size, v.mime_type,
+                u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name,
                COUNT(*) OVER() AS total_count
         FROM videos v
         JOIN users u ON u.id = v.user_id
+         LEFT JOIN channels c ON c.user_id = u.id
         WHERE to_tsvector('english', v.title || ' ' || COALESCE(v.description, ''))
               @@ plainto_tsquery('english', $1)
            OR v.title ILIKE $2
@@ -84,12 +85,13 @@ router.get('/', async (req, res) => {
       params = [search, `%${search}%`, limitNum, offset];
     } else {
       query = `
-        SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
-               v.created_at, v.file_size, v.mime_type,
-               u.username AS uploader,
+         SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
+                v.created_at, v.file_size, v.mime_type,
+                u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name,
                COUNT(*) OVER() AS total_count
         FROM videos v
         JOIN users u ON u.id = v.user_id
+         LEFT JOIN channels c ON c.user_id = u.id
         ORDER BY v.created_at DESC
         LIMIT $1 OFFSET $2
       `;
@@ -156,8 +158,9 @@ router.get('/:id', async (req, res) => {
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid video ID' });
 
     const result = await pool.query(
-      `SELECT v.*, u.username AS uploader
-       FROM videos v JOIN users u ON u.id = v.user_id
+       `SELECT v.*, u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name
+        FROM videos v JOIN users u ON u.id = v.user_id
+        LEFT JOIN channels c ON c.user_id = u.id
        WHERE v.id = $1`,
       [id]
     );
