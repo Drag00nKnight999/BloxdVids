@@ -94,11 +94,20 @@ export async function initNav() {
   try {
     const { user } = await api.get('/api/auth/me');
     if (user) {
+      if (!user.hasEmail && !document.getElementById('legacy-email-warning')) {
+        document.body.insertAdjacentHTML('afterbegin', `
+          <div class="account-warning" id="legacy-email-warning" role="status">
+            <span>Your account does not have an email address yet. Add one to improve account recovery and security.</span>
+            <a href="/settings.html">Add email</a>
+          </div>
+        `);
+      }
       nav.innerHTML = `
         <a href="/my-uploads.html" class="btn btn-ghost btn-sm">My Uploads</a>
         <a href="/channel.html?handle=${encodeURIComponent(user.username)}" class="btn btn-ghost btn-sm">Channel</a>
         <a href="/bug-report.html" class="btn btn-ghost btn-sm">Report bug</a>
         ${(user.banned || user.restricted) ? '<a href="/appeal.html" class="btn btn-ghost btn-sm">Appeal</a>' : ''}
+        ${!user.hasEmail ? '<a href="/settings.html" class="btn btn-ghost btn-sm">Settings</a>' : ''}
         ${user.role === 'owner' ? `<a href="/settings.html" class="btn btn-ghost btn-sm">${user.adminMode ? 'Owner mode' : 'Settings'}</a>` : ''}
         ${user.canModerate ? '<a href="/admin.html" class="btn btn-primary btn-sm">Moderate</a>' : ''}
         ${user.canViewDeveloperTools ? '<a href="/developer.html" class="btn btn-ghost btn-sm">Developer</a>' : ''}

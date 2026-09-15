@@ -89,6 +89,25 @@ button, input, textarea, select { font: inherit; }
   white-space: nowrap;
 }
 
+.account-warning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+  padding: .6rem 1rem;
+  background: #3c2e12;
+  border-bottom: 1px solid #8c6b20;
+  color: #f6d77a;
+  font-size: .875rem;
+  text-align: center;
+}
+.account-warning a {
+  color: #fff3bf;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 /* ── Buttons ──────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; gap: .4rem;

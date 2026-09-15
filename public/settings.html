@@ -36,11 +36,23 @@ const successMsg = document.getElementById('success-msg');
 const me = await api.get('/api/auth/me');
 if (!me.user) {
   window.location.href = '/login.html';
-} else if (me.user.role !== 'owner') {
-  content.innerHTML = '<p style="color:var(--text-muted)">There are no additional settings for this account.</p>';
 } else {
+  const settings = await api.get('/api/auth/settings');
   content.innerHTML = `
+    <form id="email-form">
+      <div class="form-group">
+        <label for="account-email" style="text-transform:none;letter-spacing:0">Account email</label>
+        <p style="color:var(--text-muted);font-size:.875rem;margin-bottom:1rem">
+          Add an email address for account recovery and security notices.
+        </p>
+        <input class="form-control" id="account-email" type="email" maxlength="320"
+               autocomplete="email" placeholder="you@example.com" value="${escAttr(settings.email)}" required/>
+      </div>
+      <button class="btn btn-primary" type="submit">Save email</button>
+    </form>
+    ${me.user.role === 'owner' ? `
     <div class="form-group">
+      <hr style="border:0;border-top:1px solid var(--border);margin:1.5rem 0"/>
       <label style="text-transform:none;letter-spacing:0">Owner preview mode</label>
       <p style="color:var(--text-muted);font-size:.875rem;margin-bottom:1rem">
         When enabled, you see BloxdVids like a regular user. Disable it to access owner moderation controls.
@@ -50,24 +62,42 @@ if (!me.user) {
         <span>Preview mode</span>
       </label>
     </div>
-    <button class="btn btn-primary" id="save-settings">Save settings</button>
+    <button class="btn btn-primary" id="save-settings" type="button">Save settings</button>` : ''}
   `;
-  const checkbox = document.getElementById('preview-mode');
-  checkbox.checked = me.user.previewMode;
-  document.getElementById('save-settings').addEventListener('click', async () => {
+  document.getElementById('email-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
     try {
-      const result = await api.patch('/api/auth/settings/preview-mode', { previewMode: checkbox.checked });
-      successMsg.textContent = result.user.previewMode
-        ? 'Preview mode is on.'
-        : 'Owner admin mode is on.';
+      await api.patch('/api/auth/settings/email', { email: document.getElementById('account-email').value });
+      successMsg.textContent = 'Email address saved.';
       successMsg.classList.add('show');
       errorMsg.classList.remove('show');
-      setTimeout(() => window.location.href = result.user.adminMode ? '/admin.html' : '/', 600);
+      document.getElementById('legacy-email-warning')?.remove();
     } catch (err) {
       errorMsg.textContent = err.message || 'Could not save settings';
       errorMsg.classList.add('show');
     }
   });
+  if (me.user.role === 'owner') {
+    const checkbox = document.getElementById('preview-mode');
+    checkbox.checked = me.user.previewMode;
+    document.getElementById('save-settings').addEventListener('click', async () => {
+      try {
+        const result = await api.patch('/api/auth/settings/preview-mode', { previewMode: checkbox.checked });
+        successMsg.textContent = result.user.previewMode
+          ? 'Preview mode is on.'
+          : 'Owner admin mode is on.';
+        successMsg.classList.add('show');
+        errorMsg.classList.remove('show');
+        setTimeout(() => window.location.href = result.user.adminMode ? '/admin.html' : '/', 600);
+      } catch (err) {
+        errorMsg.textContent = err.message || 'Could not save settings';
+        errorMsg.classList.add('show');
+      }
+    });
+  }
+}
+function escAttr(value) {
+  return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 </script>
 </body>
