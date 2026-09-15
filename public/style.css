@@ -354,6 +354,21 @@ textarea.form-control { resize: vertical; min-height: 100px; }
 }
 .video-details .meta-info { font-size: .875rem; color: var(--text-muted); }
 .video-description { font-size: .9rem; color: var(--text-muted); line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.video-category-label { color: var(--text-muted); font-size: .82rem; margin-top: .75rem; }
+.video-category-label strong { color: var(--text); }
+.video-filters { display: flex; gap: .5rem; flex-wrap: wrap; }
+.filter-select { width: auto; min-width: 145px; padding: .45rem .7rem; font-size: .82rem; }
+.video-category { color: var(--accent); }
+.text-muted { color: var(--text-muted); }
+.comments-section { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+.comment-form { display: flex; gap: .75rem; align-items: flex-end; margin-bottom: 1rem; }
+.comment-form .form-control { flex: 1; }
+.comment { position: relative; padding: .85rem 0; border-bottom: 1px solid var(--border); }
+.comment-header { display: flex; gap: .75rem; align-items: baseline; font-size: .85rem; }
+.comment-header span { color: var(--text-muted); font-size: .76rem; }
+.comment p { margin-top: .25rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-delete { color: var(--text-muted); background: none; border: 0; cursor: pointer; font-size: .75rem; margin-top: .35rem; }
+.comment-delete:hover { color: #e74c3c; }
 
 .related-panel h2 { font-size: 1rem; font-weight: 700; margin-bottom: 1rem; }
 .related-card {
@@ -464,3 +479,18 @@ textarea.form-control { resize: vertical; min-height: 100px; }
 .modal h2 { font-size: 1.2rem; margin-bottom: .75rem; }
 .modal p { color: var(--text-muted); margin-bottom: 1.5rem; }
 .modal-actions { display: flex; gap: .75rem; justify-content: flex-end; }
+.site-footer {
+  display: flex; justify-content: center; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 2rem 1rem; color: var(--text-muted); font-size: .8rem; border-top: 1px solid var(--border);
+}
+.site-footer a:hover { color: var(--text); text-decoration: underline; }
+.legal-page { max-width: 840px; }
+.legal-page h1 { font-size: 2rem; margin-bottom: .35rem; }
+.legal-page h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; }
+.legal-page p, .legal-page li { color: var(--text-muted); max-width: 75ch; }
+.legal-page ul { padding-left: 1.25rem; margin-top: .75rem; }
+.legal-updated { color: var(--text-dim) !important; font-size: .85rem; }
+@media (max-width: 640px) {
+  .comment-form { align-items: stretch; flex-direction: column; }
+  .comment-form button { align-self: flex-start; }
+}

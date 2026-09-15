@@ -41,6 +41,7 @@ export async function initDb() {
       file_size BIGINT NOT NULL,
       duration_seconds INTEGER,
       view_count INTEGER DEFAULT 0,
+      category VARCHAR(50) NOT NULL DEFAULT 'Other',
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -62,6 +63,26 @@ export async function initDb() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS restriction_type VARCHAR(30);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS restriction_reason TEXT;
     ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_mime_type VARCHAR(100);
+    ALTER TABLE videos ADD COLUMN IF NOT EXISTS category VARCHAR(50) NOT NULL DEFAULT 'Other';
+    UPDATE videos SET category = 'Other' WHERE category = 'General';
+
+    CREATE TABLE IF NOT EXISTS video_likes (
+      video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (video_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_video_likes_video ON video_likes(video_id);
+
+    CREATE TABLE IF NOT EXISTS video_comments (
+      id SERIAL PRIMARY KEY,
+      video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content VARCHAR(2000) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_video_comments_video ON video_comments(video_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS channels (
       id SERIAL PRIMARY KEY,

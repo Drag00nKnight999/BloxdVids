@@ -41,6 +41,22 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <h2>Edit video</h2>
+    <form id="edit-form">
+      <div class="form-group"><label for="edit-title">Title</label><input class="form-control" id="edit-title" maxlength="255" required/></div>
+      <div class="form-group"><label for="edit-description">Description</label><textarea class="form-control" id="edit-description" maxlength="5000" rows="4"></textarea></div>
+      <div class="form-group"><label for="edit-category">Category</label><select class="form-control" id="edit-category">
+        <option>Gaming</option><option>Entertainment</option><option>Education</option><option>Music</option>
+        <option>News</option><option>Sports</option><option>Technology</option><option>Other</option>
+      </select></div>
+      <div class="form-group"><label for="edit-thumbnail">Replace thumbnail</label><input class="form-control" id="edit-thumbnail" type="file" accept="image/jpeg,image/png,image/webp,image/gif"/></div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="cancel-edit">Cancel</button><button class="btn btn-primary">Save changes</button></div>
+    </form>
+  </div>
+</div>
+
 <div id="toast-container"></div>
 <script type="module">
 import { api, toast, initNav, formatDate, formatViews, formatBytes } from '/app.js';
@@ -55,9 +71,11 @@ const modal = document.getElementById('delete-modal');
 const cancelBtn = document.getElementById('cancel-delete');
 const confirmBtn = document.getElementById('confirm-delete');
 let pendingDeleteId = null;
+let pendingEditId = null;
 
 cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
 modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('show'); });
+document.getElementById('cancel-edit').addEventListener('click', () => document.getElementById('edit-modal').classList.remove('show'));
 
 confirmBtn.addEventListener('click', async () => {
   if (!pendingDeleteId) return;
@@ -81,6 +99,7 @@ async function loadUploads() {
   try {
     const data = await api.get('/api/videos/my/uploads');
     const videos = data.videos || [];
+    window.__uploads = videos;
     if (!videos.length) {
       list.innerHTML = `
         <div class="empty-state">
@@ -96,9 +115,10 @@ async function loadUploads() {
         <img class="my-uploads-thumb" src="/api/videos/${v.id}/thumbnail" alt="${escHtml(v.title)}" loading="lazy"/>
         <div class="my-uploads-info">
           <p class="my-uploads-title">${escHtml(v.title)}</p>
-          <p class="my-uploads-meta">${formatViews(v.view_count)} views · ${formatBytes(v.file_size)} · ${formatDate(v.created_at)}</p>
+        <p class="my-uploads-meta">${formatViews(v.view_count)} views · ${formatViews(v.like_count)} likes · ${escHtml(v.category || 'Other')} · ${formatBytes(v.file_size)} · ${formatDate(v.created_at)}</p>
           <div class="my-uploads-actions">
             <a href="/watch.html?id=${v.id}" class="btn btn-ghost btn-sm">Watch</a>
+            <button class="btn btn-ghost btn-sm" onclick="editVideo(${v.id})">Edit</button>
             <button class="btn btn-danger btn-sm" onclick="deleteVideo(${v.id})">Delete</button>
           </div>
         </div>
@@ -112,6 +132,43 @@ window.deleteVideo = (id) => {
   pendingDeleteId = id;
   modal.classList.add('show');
 };
+
+window.editVideo = (id) => {
+  const video = (window.__uploads || []).find(item => item.id === id);
+  if (!video) return;
+  pendingEditId = id;
+  document.getElementById('edit-title').value = video.title;
+  document.getElementById('edit-description').value = video.description || '';
+  document.getElementById('edit-category').value = video.category || 'Other';
+  document.getElementById('edit-thumbnail').value = '';
+  document.getElementById('edit-modal').classList.add('show');
+};
+
+document.getElementById('edit-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!pendingEditId) return;
+  const button = event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api.patch(`/api/videos/${pendingEditId}`, {
+      title: document.getElementById('edit-title').value,
+      description: document.getElementById('edit-description').value,
+      category: document.getElementById('edit-category').value,
+    });
+    const thumbnail = document.getElementById('edit-thumbnail').files[0];
+    if (thumbnail) {
+      const formData = new FormData();
+      formData.append('thumbnail', thumbnail);
+      const response = await fetch(`/api/videos/${pendingEditId}/thumbnail`, { method: 'PATCH', body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not update thumbnail');
+    }
+    toast('Video updated', 'success');
+    document.getElementById('edit-modal').classList.remove('show');
+    await loadUploads();
+  } catch (err) { toast(err.message || 'Could not update video', 'error'); }
+  finally { button.disabled = false; }
+});
 
 function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

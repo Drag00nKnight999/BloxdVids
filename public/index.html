@@ -27,12 +27,32 @@
 <main class="container page">
   <div class="section-header">
     <h2 class="section-title" id="section-title">Latest Videos</h2>
+    <div class="video-filters">
+      <select class="form-control filter-select" id="category-select" aria-label="Filter by category">
+        <option value="">All categories</option>
+        <option>Gaming</option><option>Entertainment</option><option>Education</option>
+        <option>Music</option><option>News</option><option>Sports</option>
+        <option>Technology</option><option>Other</option>
+      </select>
+      <select class="form-control filter-select" id="sort-select" aria-label="Sort videos">
+        <option value="recent">Newest</option>
+        <option value="trending">Trending</option>
+      </select>
+    </div>
   </div>
   <div id="video-grid-wrap">
     <div class="loader"><div class="spinner"></div></div>
   </div>
   <div class="pagination" id="pagination"></div>
 </main>
+
+<footer class="site-footer">
+  <span>© 2026 BloxdVids</span>
+  <a href="/terms.html">Terms</a>
+  <a href="/privacy.html">Privacy</a>
+  <a href="/community-guidelines.html">Community Guidelines</a>
+  <a href="/dmca.html">DMCA</a>
+</footer>
 
 <div id="toast-container"></div>
 <script src="/app.js" type="module"></script>

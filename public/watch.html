@@ -75,8 +75,10 @@ if (!videoId) {
           <span class="meta-info">
             By <strong>${escHtml(videoData.uploader)}</strong>
             · ${formatViews(videoData.view_count)} views
+             · <span id="like-count">${formatViews(videoData.like_count)} likes</span>
             · ${formatDate(videoData.created_at)}
           </span>
+           ${meData.user ? `<button class="btn ${videoData.liked ? 'btn-primary' : 'btn-ghost'} btn-sm" id="like-btn">${videoData.liked ? 'Liked' : 'Like'}</button>` : ''}
         ${canManage ? `<button class="btn btn-danger btn-sm" id="delete-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             Delete
@@ -84,7 +86,16 @@ if (!videoId) {
           ${meData.user && meData.user.id !== videoData.user_id ? '<button class="btn btn-ghost btn-sm" id="report-btn">Report</button>' : ''}
         </div>
         ${videoData.description ? `<p class="video-description">${escHtml(videoData.description)}</p>` : ''}
+         <p class="video-category-label">Category: <strong>${escHtml(videoData.category || 'Other')}</strong></p>
       </div>
+       <section class="comments-section">
+         <div class="section-header"><h2 class="section-title">Comments</h2><span id="comment-count" class="text-muted"></span></div>
+         ${meData.user ? `<form id="comment-form" class="comment-form">
+           <textarea class="form-control" id="comment-input" maxlength="2000" rows="3" placeholder="Share your thoughts…" required></textarea>
+           <button class="btn btn-primary btn-sm" type="submit">Post comment</button>
+         </form>` : '<p class="text-muted">Sign in to join the conversation.</p>'}
+         <div id="comments-list"><div class="loader"><div class="spinner"></div></div></div>
+       </section>
     </div>
     <aside class="related-panel">
       <h2>More videos</h2>
@@ -124,6 +135,53 @@ if (!videoId) {
       }
     });
   }
+  document.getElementById('like-btn')?.addEventListener('click', async (event) => {
+    event.target.disabled = true;
+    try {
+      const result = videoData.liked
+        ? await api.delete(`/api/videos/${videoId}/like`)
+        : await api.post(`/api/videos/${videoId}/like`, {});
+      videoData.liked = result.liked;
+      event.target.textContent = result.liked ? 'Liked' : 'Like';
+      event.target.className = `btn ${result.liked ? 'btn-primary' : 'btn-ghost'} btn-sm`;
+      document.getElementById('like-count').textContent = `${formatViews(result.likeCount)} likes`;
+    } catch (err) {
+      toast(err.message || 'Could not update like', 'error');
+    } finally {
+      event.target.disabled = false;
+    }
+  });
+  async function loadComments() {
+    const commentsEl = document.getElementById('comments-list');
+    try {
+      const data = await api.get(`/api/videos/${videoId}/comments`);
+      document.getElementById('comment-count').textContent = `${data.comments.length} comments`;
+      commentsEl.innerHTML = data.comments.length ? data.comments.map(comment => `
+        <article class="comment">
+          <div class="comment-header"><strong>${escHtml(comment.username)}</strong><span>${formatDate(comment.created_at)}</span></div>
+          <p>${escHtml(comment.content)}</p>
+          ${(meData.user && (meData.user.id === comment.user_id || meData.user.canModerate)) ? `<button class="comment-delete" data-comment-id="${comment.id}">Delete</button>` : ''}
+        </article>`).join('') : '<p class="text-muted">No comments yet.</p>';
+      commentsEl.querySelectorAll('[data-comment-id]').forEach(button => button.addEventListener('click', async () => {
+        try {
+          await api.delete(`/api/videos/${videoId}/comments/${button.dataset.commentId}`);
+          await loadComments();
+        } catch (err) { toast(err.message || 'Could not delete comment', 'error'); }
+      }));
+    } catch (err) {
+      commentsEl.innerHTML = `<p class="text-muted">${escHtml(err.message)}</p>`;
+    }
+  }
+  document.getElementById('comment-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const input = document.getElementById('comment-input');
+    try {
+      await api.post(`/api/videos/${videoId}/comments`, { content: input.value });
+      input.value = '';
+      await loadComments();
+    } catch (err) { toast(err.message || 'Could not post comment', 'error'); }
+  });
+  loadComments();
   document.getElementById('report-btn')?.addEventListener('click', async () => {
     const details = prompt('What is wrong with this video?');
     if (!details) return;

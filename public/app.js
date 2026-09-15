@@ -138,10 +138,14 @@ export async function initNav() {
 // ── Home page: video grid + pagination + search ────────────────────────────────
 let currentPage = 1;
 let currentQuery = '';
+let currentSort = 'recent';
+let currentCategory = '';
 
-export async function loadVideos(page = 1, q = '') {
+export async function loadVideos(page = 1, q = currentQuery, sort = currentSort, category = currentCategory) {
   currentPage = page;
   currentQuery = q;
+  currentSort = sort;
+  currentCategory = category;
 
   const wrap = document.getElementById('video-grid-wrap');
   const paginationEl = document.getElementById('pagination');
@@ -151,13 +155,14 @@ export async function loadVideos(page = 1, q = '') {
   wrap.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
 
   try {
-    const params = new URLSearchParams({ page, limit: 20 });
+    const params = new URLSearchParams({ page, limit: 20, sort });
     if (q) params.set('q', q);
+    if (category) params.set('category', category);
     const data = await api.get(`/api/videos?${params}`);
     const { videos, pagination } = data;
 
     if (sectionTitle) {
-      sectionTitle.textContent = q ? `Results for "${q}"` : 'Latest Videos';
+      sectionTitle.textContent = q ? `Results for "${q}"` : sort === 'trending' ? 'Trending Videos' : 'Latest Videos';
     }
 
     if (!videos.length) {
@@ -196,7 +201,9 @@ function videoCard(v) {
         <p class="video-title">${escHtml(v.title)}</p>
         <div class="video-meta">
            <span>${v.channel_handle ? `<a href="/channel.html?handle=${encodeURIComponent(v.channel_handle)}" onclick="event.stopPropagation()">${escHtml(v.channel_name || v.uploader)}</a>` : escHtml(v.uploader)}</span>
-          <span>${formatViews(v.view_count)} views</span>
+           <span>${formatViews(v.view_count)} views</span>
+           <span>${formatViews(v.like_count)} likes</span>
+           ${v.category ? `<span class="video-category">${escHtml(v.category)}</span>` : ''}
           <span>${formatDate(v.created_at)}</span>
         </div>
       </div>
@@ -229,7 +236,7 @@ function getPageRange(current, total) {
   return [1, '…', current - 1, current, current + 1, '…', total];
 }
 
-window.__gotoPage = (p) => loadVideos(p, currentQuery);
+window.__gotoPage = (p) => loadVideos(p, currentQuery, currentSort, currentCategory);
 
 // ── Search wiring (only on index page) ────────────────────────────────────────
 if (typeof document !== 'undefined') {
@@ -242,12 +249,18 @@ if (typeof document !== 'undefined') {
     input.addEventListener('input', () => {
       clearTimeout(debounce);
       debounce = setTimeout(() => {
-        loadVideos(1, input.value.trim());
+        loadVideos(1, input.value.trim(), currentSort, currentCategory);
       }, 400);
     });
-    btn?.addEventListener('click', () => loadVideos(1, input.value.trim()));
+    btn?.addEventListener('click', () => loadVideos(1, input.value.trim(), currentSort, currentCategory));
     input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') loadVideos(1, input.value.trim());
+      if (e.key === 'Enter') loadVideos(1, input.value.trim(), currentSort, currentCategory);
+    });
+    document.getElementById('sort-select')?.addEventListener('change', (event) => {
+      loadVideos(1, input.value.trim(), event.target.value, document.getElementById('category-select')?.value || '');
+    });
+    document.getElementById('category-select')?.addEventListener('change', (event) => {
+      loadVideos(1, input.value.trim(), document.getElementById('sort-select')?.value || 'recent', event.target.value);
     });
   });
 }

@@ -174,6 +174,12 @@ router.post('/reports', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'A valid category, details, and reported user or video are required' });
     }
     if (reportedUserId === req.currentUser.id) return res.status(400).json({ error: 'You cannot report yourself' });
+    const [reportedUser, reportedVideo] = await Promise.all([
+      reportedUserId ? pool.query('SELECT 1 FROM users WHERE id = $1', [reportedUserId]) : Promise.resolve({ rows: [] }),
+      videoId ? pool.query('SELECT 1 FROM videos WHERE id = $1', [videoId]) : Promise.resolve({ rows: [] }),
+    ]);
+    if (reportedUserId && !reportedUser.rows[0]) return res.status(404).json({ error: 'Reported user not found' });
+    if (videoId && !reportedVideo.rows[0]) return res.status(404).json({ error: 'Reported video not found' });
     const result = await pool.query(
       `INSERT INTO reports (reporter_id, reported_user_id, video_id, category, details)
        VALUES ($1, $2, $3, $4, $5) RETURNING id, status, created_at`,

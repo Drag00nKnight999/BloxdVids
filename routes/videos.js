@@ -23,8 +23,11 @@ const ALLOWED_IMAGE_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
 ]);
 
-const MAX_VIDEO_SIZE = 5 * 1024 * 1024 * 1024; // 5 GB
+const MAX_VIDEO_SIZE = 10 * 1024 * 1024 * 1024; // 10 GB
 const MAX_THUMB_SIZE = 10 * 1024 * 1024;        // 10 MB
+const VIDEO_CATEGORIES = new Set([
+  'Gaming', 'Entertainment', 'Education', 'Music', 'News', 'Sports', 'Technology', 'Other',
+]);
 const TEMP_UPLOAD_DIR = path.join(os.tmpdir(), 'bloxdvids-uploads');
 fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
 
@@ -40,8 +43,8 @@ const upload = multer({
   limits: {
     fileSize: MAX_VIDEO_SIZE,
     files: 2,
-    fields: 3,
-    parts: 5,
+    fields: 5,
+    parts: 8,
     fieldNameSize: 100,
     fieldSize: 100 * 1024,
     headerPairs: 200,
@@ -57,46 +60,63 @@ const upload = multer({
   },
 });
 
+const thumbnailUpload = multer({
+  storage,
+  limits: {
+    fileSize: MAX_THUMB_SIZE,
+    files: 1,
+    fields: 0,
+    parts: 1,
+    fieldNameSize: 100,
+    headerPairs: 200,
+  },
+  fileFilter(_req, file, cb) {
+    cb(ALLOWED_IMAGE_TYPES.has(file.mimetype) ? null : new Error(`Invalid file type: ${file.mimetype}`),
+      ALLOWED_IMAGE_TYPES.has(file.mimetype));
+  },
+});
+
 // GET /api/videos  — list / search
 router.get('/', async (req, res) => {
   try {
-    const { q, page = 1, limit = 20 } = req.query;
+    const { q, category, sort = 'recent', page = 1, limit = 20 } = req.query;
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const offset = (pageNum - 1) * limitNum;
 
-    let query, params;
+    const params = [];
+    const conditions = [];
+    let query;
     if (q && q.trim()) {
-      const search = q.trim();
-      query = `
-         SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
-                v.created_at, v.file_size, v.mime_type,
-                u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name,
-               COUNT(*) OVER() AS total_count
-        FROM videos v
-        JOIN users u ON u.id = v.user_id
-         LEFT JOIN channels c ON c.user_id = u.id
-        WHERE to_tsvector('english', v.title || ' ' || COALESCE(v.description, ''))
-              @@ plainto_tsquery('english', $1)
-           OR v.title ILIKE $2
-        ORDER BY v.created_at DESC
-        LIMIT $3 OFFSET $4
-      `;
-      params = [search, `%${search}%`, limitNum, offset];
-    } else {
-      query = `
-         SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
-                v.created_at, v.file_size, v.mime_type,
-                u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name,
-               COUNT(*) OVER() AS total_count
-        FROM videos v
-        JOIN users u ON u.id = v.user_id
-         LEFT JOIN channels c ON c.user_id = u.id
-        ORDER BY v.created_at DESC
-        LIMIT $1 OFFSET $2
-      `;
-      params = [limitNum, offset];
+      params.push(q.trim(), `%${q.trim()}%`);
+      conditions.push(`(
+        to_tsvector('english', v.title || ' ' || COALESCE(v.description, '') || ' ' || COALESCE(c.name, ''))
+          @@ plainto_tsquery('english', $${params.length - 1})
+        OR v.title ILIKE $${params.length}
+        OR c.name ILIKE $${params.length}
+      )`);
     }
+    if (category && VIDEO_CATEGORIES.has(category)) {
+      params.push(category);
+      conditions.push(`v.category = $${params.length}`);
+    }
+    const orderBy = sort === 'trending'
+      ? '(v.view_count * 1.0 + (SELECT COUNT(*) FROM video_likes vl WHERE vl.video_id = v.id) * 8) / GREATEST(EXTRACT(EPOCH FROM (NOW() - v.created_at)) / 86400 + 2, 2) DESC, v.created_at DESC'
+      : 'v.created_at DESC';
+    params.push(limitNum, offset);
+    query = `
+       SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count, v.category,
+              v.created_at, v.file_size, v.mime_type,
+              (SELECT COUNT(*) FROM video_likes vl WHERE vl.video_id = v.id)::int AS like_count,
+              u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name,
+              COUNT(*) OVER() AS total_count
+      FROM videos v
+      JOIN users u ON u.id = v.user_id
+       LEFT JOIN channels c ON c.user_id = u.id
+      ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+      ORDER BY ${orderBy}
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `;
 
     const result = await pool.query(query, params);
     const total = result.rows[0]?.total_count ?? 0;
@@ -138,7 +158,8 @@ router.get('/my/uploads', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
-              v.created_at, v.file_size, v.mime_type
+              v.created_at, v.file_size, v.mime_type, v.category,
+              (SELECT COUNT(*) FROM video_likes vl WHERE vl.video_id = v.id)::int AS like_count
        FROM videos v
        WHERE v.user_id = $1
        ORDER BY v.created_at DESC`,
@@ -166,8 +187,25 @@ router.get('/:id', async (req, res) => {
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Video not found' });
 
-    // Increment view count asynchronously
-    pool.query('UPDATE videos SET view_count = view_count + 1 WHERE id = $1', [id]).catch(() => {});
+    const viewUpdate = await pool.query(
+      'UPDATE videos SET view_count = view_count + 1 WHERE id = $1 RETURNING view_count',
+      [id]
+    );
+    result.rows[0].view_count = viewUpdate.rows[0]?.view_count ?? result.rows[0].view_count;
+    const likeCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM video_likes WHERE video_id = $1',
+      [id]
+    );
+    result.rows[0].like_count = likeCount.rows[0].count;
+    if (req.session?.userId) {
+      const liked = await pool.query(
+        'SELECT 1 FROM video_likes WHERE video_id = $1 AND user_id = $2',
+        [id, req.session.userId]
+      );
+      result.rows[0].liked = Boolean(liked.rows[0]);
+    } else {
+      result.rows[0].liked = false;
+    }
 
     res.json(stripStorageKey(result.rows[0]));
   } catch (err) {
@@ -189,7 +227,7 @@ router.post(
         const partialFiles = Object.values(req.files || {}).flat();
         Promise.allSettled(partialFiles.map((file) => fsPromises.rm(file.path, { force: true }))).finally(() => {
           if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(413).json({ error: 'Video file too large (max 5 GB)' });
+            return res.status(413).json({ error: 'Video file too large (max 10 GB)' });
           }
           return res.status(400).json({ error: err.message });
         });
@@ -207,7 +245,10 @@ router.post(
       const videoFile = req.files?.video?.[0];
       if (!videoFile) return res.status(400).json({ error: 'Video file is required' });
 
-      const { title, description } = req.body || {};
+       const { title, description } = req.body || {};
+       const category = typeof req.body?.category === 'string' && VIDEO_CATEGORIES.has(req.body.category)
+         ? req.body.category
+         : 'Other';
       if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
       if (title.trim().length > 255) return res.status(400).json({ error: 'Title too long (max 255 characters)' });
       if (req.body?.content_policy_ack !== 'on') {
@@ -230,13 +271,14 @@ router.post(
 
       // Reserve a DB row first to get an ID for the storage key
       const { rows } = await pool.query(
-        `INSERT INTO videos (user_id, title, description, storage_key, mime_type, file_size)
-         VALUES ($1, $2, $3, $4, $5, $6)
+         `INSERT INTO videos (user_id, title, description, category, storage_key, mime_type, file_size)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
         [
           req.session.userId,
           title.trim(),
           (description || '').trim().slice(0, 5000),
+           category,
           'pending',
           videoFile.mimetype,
           videoFile.size,
@@ -268,7 +310,7 @@ router.post(
       );
 
       res.status(201).json({
-        video: { id: videoId, title: title.trim(), description: (description || '').trim() },
+        video: { id: videoId, title: title.trim(), description: (description || '').trim(), category },
       });
     } catch (err) {
       console.error('Upload error:', err);
@@ -283,6 +325,160 @@ router.post(
     }
   }
 );
+
+// PATCH /api/videos/:id — owners can edit public metadata
+router.patch('/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+    const category = typeof req.body?.category === 'string' ? req.body.category.trim() : '';
+    if (!Number.isInteger(id) || !title || title.length > 255 || description.length > 5000) {
+      return res.status(400).json({ error: 'Title is required and fields are too long' });
+    }
+    if (!VIDEO_CATEGORIES.has(category)) return res.status(400).json({ error: 'Choose a valid category' });
+    const result = await pool.query(
+      `UPDATE videos SET title = $1, description = $2, category = $3, updated_at = NOW()
+       WHERE id = $4 AND user_id = $5
+       RETURNING id, title, description, category, updated_at`,
+      [title, description, category, id, req.session.userId]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Video not found or you do not own it' });
+    res.json({ video: result.rows[0] });
+  } catch (err) {
+    console.error('Edit video error:', err);
+    res.status(500).json({ error: 'Could not update video' });
+  }
+});
+
+// PATCH /api/videos/:id/thumbnail — owners can replace a thumbnail
+router.patch('/:id/thumbnail', requireAuth, (req, res, next) => {
+  thumbnailUpload.single('thumbnail')(req, res, (err) => {
+    if (err) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'Thumbnail too large (max 10 MB)' : err.message,
+    });
+    next();
+  });
+}, async (req, res) => {
+  const file = req.file;
+  let newKey = null;
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || !file) return res.status(400).json({ error: 'A thumbnail image is required' });
+    if (file.size > MAX_THUMB_SIZE) return res.status(413).json({ error: 'Thumbnail too large (max 10 MB)' });
+    if (!await hasValidFileSignature(file.path, file.mimetype, true)) {
+      return res.status(400).json({ error: 'The thumbnail contents do not match its declared type' });
+    }
+    const current = await pool.query(
+      'SELECT thumbnail_key FROM videos WHERE id = $1 AND user_id = $2',
+      [id, req.session.userId]
+    );
+    if (!current.rows[0]) return res.status(404).json({ error: 'Video not found or you do not own it' });
+    newKey = `thumbnails/${id}-${crypto.randomUUID()}`;
+    await uploadFileFromFilename(newKey, file.path, file.mimetype);
+    await pool.query(
+      'UPDATE videos SET thumbnail_key = $1, thumbnail_mime_type = $2, updated_at = NOW() WHERE id = $3',
+      [newKey, file.mimetype, id]
+    );
+    if (current.rows[0].thumbnail_key) await deleteFile(current.rows[0].thumbnail_key).catch(() => {});
+    res.json({ success: true });
+  } catch (err) {
+    if (newKey) await deleteFile(newKey).catch(() => {});
+    console.error('Edit thumbnail error:', err);
+    res.status(500).json({ error: 'Could not update thumbnail' });
+  } finally {
+    if (file?.path) await fsPromises.rm(file.path, { force: true });
+  }
+});
+
+// GET /api/videos/:id/comments
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid video ID' });
+    const result = await pool.query(
+      `SELECT c.id, c.content, c.created_at, c.updated_at, u.id AS user_id, u.username
+       FROM video_comments c JOIN users u ON u.id = c.user_id
+       WHERE c.video_id = $1 ORDER BY c.created_at DESC LIMIT 200`,
+      [id]
+    );
+    res.json({ comments: result.rows });
+  } catch (err) {
+    console.error('List comments error:', err);
+    res.status(500).json({ error: 'Failed to load comments' });
+  }
+});
+
+router.post('/:id/comments', requireAuth, async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim().slice(0, 2000) : '';
+    if (!Number.isInteger(id) || !content) return res.status(400).json({ error: 'Comment text is required' });
+    const video = await pool.query('SELECT 1 FROM videos WHERE id = $1', [id]);
+    if (!video.rows[0]) return res.status(404).json({ error: 'Video not found' });
+    const result = await pool.query(
+      `INSERT INTO video_comments (video_id, user_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING id, content, created_at, updated_at`,
+      [id, req.session.userId, content]
+    );
+    res.status(201).json({ comment: { ...result.rows[0], user_id: req.currentUser.id, username: req.currentUser.username } });
+  } catch (err) {
+    console.error('Create comment error:', err);
+    res.status(500).json({ error: 'Could not post comment' });
+  }
+});
+
+router.delete('/:id/comments/:commentId', requireAuth, async (req, res) => {
+  try {
+    const commentId = Number.parseInt(req.params.commentId, 10);
+    const result = await pool.query(
+      `DELETE FROM video_comments c
+       USING users u
+       WHERE c.id = $1 AND c.user_id = u.id
+         AND (c.user_id = $2 OR $3 = TRUE)
+       RETURNING c.id`,
+      [commentId, req.session.userId, isOwnerAdmin(req.currentUser) || isModerator(req.currentUser)]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Comment not found or not removable' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete comment error:', err);
+    res.status(500).json({ error: 'Could not delete comment' });
+  }
+});
+
+router.post('/:id/like', requireAuth, async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    const result = await pool.query(
+      `INSERT INTO video_likes (video_id, user_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING RETURNING video_id`,
+      [id, req.session.userId]
+    );
+    if (!result.rows[0]) {
+      const exists = await pool.query('SELECT 1 FROM videos WHERE id = $1', [id]);
+      if (!exists.rows[0]) return res.status(404).json({ error: 'Video not found' });
+    }
+    const count = await pool.query('SELECT COUNT(*)::int AS count FROM video_likes WHERE video_id = $1', [id]);
+    res.json({ liked: true, likeCount: count.rows[0].count });
+  } catch (err) {
+    console.error('Like video error:', err);
+    res.status(500).json({ error: 'Could not like video' });
+  }
+});
+
+router.delete('/:id/like', requireAuth, async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    await pool.query('DELETE FROM video_likes WHERE video_id = $1 AND user_id = $2', [id, req.session.userId]);
+    const count = await pool.query('SELECT COUNT(*)::int AS count FROM video_likes WHERE video_id = $1', [id]);
+    res.json({ liked: false, likeCount: count.rows[0].count });
+  } catch (err) {
+    console.error('Unlike video error:', err);
+    res.status(500).json({ error: 'Could not remove like' });
+  }
+});
 
 // DELETE /api/videos/:id — owner deletion or moderator/admin content moderation
 router.delete('/:id', requireAuth, async (req, res) => {
