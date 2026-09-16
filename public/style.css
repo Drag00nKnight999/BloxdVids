@@ -318,7 +318,13 @@ textarea.form-control { resize: vertical; min-height: 100px; }
   border-radius: 4px; width: 0;
   transition: width .3s;
 }
+.progress-bar.processing {
+  background: linear-gradient(90deg, var(--accent), #ff9a5c, var(--accent));
+  background-size: 200% 100%;
+  animation: progressPulse 1.4s linear infinite;
+}
 .progress-label { font-size: .8rem; color: var(--text-muted); margin-top: .35rem; }
+@keyframes progressPulse { to { background-position: -200% 0; } }
 
 /* ── Watch Page ───────────────────────────────────────── */
 .watch-layout {

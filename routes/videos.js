@@ -319,7 +319,13 @@ router.post(
         uploadedThumbnailKey ? deleteFile(uploadedThumbnailKey) : Promise.resolve(),
         videoId ? pool.query('DELETE FROM videos WHERE id = $1', [videoId]) : Promise.resolve(),
       ]);
-      res.status(500).json({ error: 'Upload failed' });
+      const storageMessage = String(err?.message || '');
+      if (/bucket name|storage|cloud storage/i.test(storageMessage)) {
+        return res.status(503).json({
+          error: 'Video storage is unavailable right now. Please try again later.',
+        });
+      }
+      res.status(500).json({ error: 'Upload failed while processing the video' });
     } finally {
       await Promise.allSettled(tempFiles.map((file) => fsPromises.rm(file, { force: true })));
     }

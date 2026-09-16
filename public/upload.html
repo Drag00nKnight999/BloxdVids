@@ -184,24 +184,48 @@ form.addEventListener('submit', async (e) => {
   }
 
   submitBtn.disabled = true;
+   submitBtn.dataset.originalText = submitBtn.textContent.trim();
+   submitBtn.textContent = 'Uploading…';
   progressWrap.classList.add('show');
+   progressBar.classList.remove('processing');
 
   const fd = new FormData(form);
 
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/videos');
+   // Large files can take time to be finalized after the browser finishes
+   // sending the request body. Keep the user informed instead of appearing
+   // stuck forever if the server or storage service never responds.
+   xhr.timeout = 60 * 60 * 1000;
 
   xhr.upload.addEventListener('progress', (ev) => {
     if (ev.lengthComputable) {
       const pct = Math.round((ev.loaded / ev.total) * 100);
       progressBar.style.width = pct + '%';
-      progressLabel.textContent = `Uploading… ${pct}% (${formatBytes(ev.loaded)} / ${formatBytes(ev.total)})`;
+       if (pct >= 100) {
+         progressBar.classList.add('processing');
+         submitBtn.textContent = 'Processing…';
+         progressLabel.textContent = 'Upload received. Processing and saving your video…';
+       } else {
+         progressLabel.textContent = `Uploading… ${pct}% (${formatBytes(ev.loaded)} / ${formatBytes(ev.total)})`;
+       }
     }
   });
 
   xhr.addEventListener('load', () => {
+     progressBar.classList.remove('processing');
     if (xhr.status === 201) {
-      const data = JSON.parse(xhr.responseText);
+       let data;
+       try {
+         data = JSON.parse(xhr.responseText);
+       } catch {
+         showUploadError('The server returned an invalid upload response. Please try again.');
+         return;
+       }
+       if (!data.video?.id) {
+         showUploadError('The upload completed without a video ID. Please try again.');
+         return;
+       }
       progressLabel.textContent = 'Upload complete!';
       progressBar.style.width = '100%';
       successMsg.textContent = 'Video uploaded successfully! Redirecting…';
@@ -210,21 +234,33 @@ form.addEventListener('submit', async (e) => {
     } else {
       let msg = 'Upload failed';
       try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
-      errorMsg.textContent = msg;
-      errorMsg.classList.add('show');
-      progressWrap.classList.remove('show');
-      submitBtn.disabled = false;
+       showUploadError(msg);
     }
   });
 
   xhr.addEventListener('error', () => {
-    errorMsg.textContent = 'Network error during upload';
-    errorMsg.classList.add('show');
-    progressWrap.classList.remove('show');
-    submitBtn.disabled = false;
+     showUploadError('Network error while processing the upload. Check your connection and try again.');
+   });
+
+   xhr.addEventListener('abort', () => {
+     showUploadError('The upload was interrupted before the server finished processing it.');
+   });
+
+   xhr.addEventListener('timeout', () => {
+     showUploadError('The server took too long to process this upload. The file may be too large or storage may be unavailable.');
   });
 
   xhr.send(fd);
+
+   function showUploadError(message) {
+     progressBar.classList.remove('processing');
+     errorMsg.textContent = message;
+     errorMsg.classList.add('show');
+     progressWrap.classList.remove('show');
+     progressLabel.textContent = '';
+     submitBtn.disabled = false;
+     submitBtn.textContent = submitBtn.dataset.originalText || 'Upload video';
+   }
 });
 </script>
 </body>
