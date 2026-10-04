@@ -1,9 +1,90 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>DMCA – BloxdVids</title><link rel="stylesheet" href="/style.css"/></head>
 <body><nav class="navbar"><a href="/" class="nav-logo"><svg viewBox="0 0 28 28" fill="currentColor"><path d="M14 2C7.373 2 2 7.373 2 14s5.373 12 12 12 12-5.373 12-12S20.627 2 14 2zm-2 16.5v-9l7 4.5-7 4.5z"/></svg>BloxdVids</a><div class="nav-actions"><a href="/" class="btn btn-ghost btn-sm">Back home</a></div></nav>
-<main class="container page legal-page"><h1>DMCA Copyright Notices</h1><p class="legal-updated">Last updated: September 15, 2026</p>
-<p>If you believe content on BloxdVids infringes your copyright, send a written notice to the service owner through the project’s designated support contact. A valid notice should include:</p>
-<ul><li>Your physical or electronic signature.</li><li>Identification of the copyrighted work.</li><li>The URL or other specific location of the allegedly infringing content.</li><li>Your contact information.</li><li>A statement that you have a good-faith belief the use is not authorized.</li><li>A statement, under penalty of perjury, that the information is accurate and that you are authorized to act for the copyright owner.</li></ul>
-<h2>Counter-notices</h2><p>If your content was removed because of a copyright notice and you believe the removal was mistaken, you may submit a counter-notice with the information required by applicable law. Content may be restored when legally appropriate.</p>
+<main class="container page legal-page"><h1>Copyright Notices</h1><p class="legal-updated">Last updated: October 4, 2026</p>
+<div role="note" style="padding:1rem;border:1px solid var(--border);border-radius:var(--radius);margin:1rem 0;color:var(--text-muted)"><strong>Informational only — not legal advice.</strong> This form is a technical intake channel. BloxdVids has not provided verified designated-agent details here. Submitting this form does not establish that service on a registered DMCA agent has occurred, confirm legal compliance, or guarantee a particular response. Consider consulting a qualified attorney.</div>
+<p>Use this form to submit a copyright notice or a counter-notice for a removal you believe resulted from mistake or misidentification. Please provide the information requested for the selected submission type. The form does not automatically remove or restore content; a moderator must review each submission.</p>
+<p>Contact details and legal statements are stored in private case records and are visible to authorized moderators and administrators. Information may be shared as needed to process a notice or counter-notice or as required by law. Read the <a href="/privacy.html">Privacy Policy</a>.</p>
+<form id="dmca-form" style="margin-top:2rem">
+  <div class="form-error" id="dmca-error" role="alert"></div><div class="form-success" id="dmca-success" role="status"></div>
+  <div class="form-group"><label for="submission-type">Submission type</label><select class="form-control" id="submission-type" name="type" required><option value="notice">Copyright notice</option><option value="counter_notice">Counter-notice</option></select></div>
+  <div class="form-group"><label for="name">Your full legal name</label><input class="form-control" id="name" name="name" maxlength="200" autocomplete="name" required/></div>
+  <div class="form-group"><label for="email">Email address</label><input class="form-control" id="email" name="email" type="email" maxlength="320" autocomplete="email" required/></div>
+  <div class="form-group"><label for="address">Mailing address</label><textarea class="form-control" id="address" name="address" maxlength="2000" autocomplete="street-address" required></textarea></div>
+  <div class="form-group"><label for="phone">Telephone number</label><input class="form-control" id="phone" name="phone" type="tel" maxlength="60" autocomplete="tel" required/></div>
+  <div class="form-group"><label for="signature">Electronic signature (type your full legal name)</label><input class="form-control" id="signature" name="signature" maxlength="200" required/></div>
+  <section id="notice-fields">
+    <div class="form-group"><label for="copyrighted-work">Identify the copyrighted work</label><textarea class="form-control" id="copyrighted-work" name="copyrightedWork" maxlength="5000" placeholder="Describe the work, or identify a representative list of works." required></textarea></div>
+    <div class="form-group"><label for="notice-location">Location of the material on BloxdVids</label><textarea class="form-control" id="notice-location" maxlength="5000" placeholder="Provide the full URL for each item, one per line." required></textarea></div>
+    <label style="display:block;margin:1rem 0;color:var(--text-muted)"><input type="checkbox" id="good-faith"/> I have a good-faith belief that the use of the material is not authorized by the copyright owner, its agent, or the law.</label>
+    <label style="display:block;margin:1rem 0;color:var(--text-muted)"><input type="checkbox" id="accuracy-authority"/> The information in this notice is accurate and, under penalty of perjury, I am the copyright owner or authorized to act for the owner.</label>
+  </section>
+  <section id="counter-fields" hidden>
+    <div class="form-group"><label for="original-reference">Reference or details of the original notice (optional)</label><textarea class="form-control" id="original-reference" maxlength="2000" placeholder="Enter the reference if it was submitted through this form, or describe the original notice if available."></textarea></div>
+    <div class="form-group"><label for="counter-location">Identify the removed material and where it appeared before removal</label><textarea class="form-control" id="counter-location" maxlength="5000" placeholder="Describe the material and provide the original URL or location."></textarea></div>
+    <label style="display:block;margin:1rem 0;color:var(--text-muted)"><input type="checkbox" id="counter-good-faith"/> Under penalty of perjury, I have a good-faith belief the material was removed or disabled as a result of mistake or misidentification.</label>
+    <label style="display:block;margin:1rem 0;color:var(--text-muted)"><input type="checkbox" id="jurisdiction-consent"/> I consent to the jurisdiction of the Federal District Court for the judicial district where my address is located; if outside the United States, I consent to any judicial district where the service provider may be found.</label>
+    <label style="display:block;margin:1rem 0;color:var(--text-muted)"><input type="checkbox" id="service-consent"/> I will accept service of process from the person who submitted the original notice or that person's agent.</label>
+  </section>
+  <div style="position:absolute;left:-10000px" aria-hidden="true"><label for="website">Leave this field empty</label><input id="website" name="website" tabindex="-1" autocomplete="off"/></div>
+  <button class="btn btn-primary" id="submit-dmca">Submit for review</button>
+</form>
+<h2>What happens next</h2><p>After submission, the form displays a reference number. Authorized moderators can review the submission and update its status. This tool does not automatically disable or restore content and is not a substitute for any legally required designated-agent filing or service method.</p>
 <h2>Repeat infringement</h2><p>Accounts that repeatedly upload infringing content may lose upload access or be terminated.</p></main>
-<footer class="site-footer"><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/community-guidelines.html">Community Guidelines</a></footer></body></html>
+<footer class="site-footer"><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/community-guidelines.html">Community Guidelines</a></footer>
+<script type="module">
+import { api } from '/app.js';
+const form = document.getElementById('dmca-form');
+const type = document.getElementById('submission-type');
+const noticeFields = document.getElementById('notice-fields');
+const counterFields = document.getElementById('counter-fields');
+const error = document.getElementById('dmca-error');
+const success = document.getElementById('dmca-success');
+function updateFields() {
+  const isCounter = type.value === 'counter_notice';
+  noticeFields.hidden = isCounter;
+  counterFields.hidden = !isCounter;
+  noticeFields.querySelectorAll('textarea,input').forEach(field => { field.disabled = isCounter; });
+  counterFields.querySelectorAll('textarea,input').forEach(field => { field.disabled = !isCounter; });
+}
+type.addEventListener('change', updateFields);
+updateFields();
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  error.classList.remove('show');
+  success.classList.remove('show');
+  const isCounter = type.value === 'counter_notice';
+  const payload = {
+    type: type.value,
+    name: document.getElementById('name').value,
+    email: document.getElementById('email').value,
+    address: document.getElementById('address').value,
+    phone: document.getElementById('phone').value,
+    signature: document.getElementById('signature').value,
+    copyrightedWork: isCounter ? '' : document.getElementById('copyrighted-work').value,
+    contentLocation: document.getElementById(isCounter ? 'counter-location' : 'notice-location').value,
+    reference: isCounter ? document.getElementById('original-reference').value : '',
+    goodFaith: !isCounter && document.getElementById('good-faith').checked,
+    accuracyAndAuthority: !isCounter && document.getElementById('accuracy-authority').checked,
+    counterGoodFaith: isCounter && document.getElementById('counter-good-faith').checked,
+    jurisdictionConsent: isCounter && document.getElementById('jurisdiction-consent').checked,
+    serviceOfProcessConsent: isCounter && document.getElementById('service-consent').checked,
+    website: document.getElementById('website').value,
+  };
+  const submit = document.getElementById('submit-dmca');
+  submit.disabled = true;
+  try {
+    const data = await api.post('/api/platform/copyright-cases', payload);
+    success.textContent = `Submission received. Save this reference number: ${data.submission.public_ref}.`;
+    success.classList.add('show');
+    form.reset();
+    updateFields();
+  } catch (err) {
+    error.textContent = err.message || 'Submission could not be completed.';
+    error.classList.add('show');
+  } finally {
+    submit.disabled = false;
+  }
+});
+</script>
+</body></html>

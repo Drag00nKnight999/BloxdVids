@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import pool from '../db.js';
 import { deleteFile } from '../storage.js';
 import {
@@ -23,6 +24,12 @@ const SEVERITIES = new Set(['low', 'normal', 'high', 'critical']);
 
 function text(value, max) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function legalText(value, max) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed.length <= max ? trimmed : null;
 }
 
 function parseDuration(value) {
@@ -220,6 +227,117 @@ router.patch('/reports/:id', requireModeration, async (req, res, next) => {
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Report not found' });
     res.json({ report: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Copyright notices and counter-notices are private intake records. Only moderators
+// and admins can retrieve or update them; public submitters receive only a reference.
+router.post('/copyright-cases', async (req, res, next) => {
+  try {
+    const type = legalText(req.body?.type, 20);
+    const name = legalText(req.body?.name, 200);
+    const rawEmail = legalText(req.body?.email, 320);
+    const email = rawEmail?.toLowerCase() || rawEmail;
+    const address = legalText(req.body?.address, 2000);
+    const phone = legalText(req.body?.phone, 60);
+    const signature = legalText(req.body?.signature, 200);
+    const copyrightedWork = legalText(req.body?.copyrightedWork, 5000);
+    const contentLocation = legalText(req.body?.contentLocation, 5000);
+    const priorNoticeDetails = legalText(req.body?.reference, 2000);
+    const trap = legalText(req.body?.website, 300);
+
+    if ([type, name, rawEmail, address, phone, signature, copyrightedWork, contentLocation, priorNoticeDetails, trap].includes(null)) {
+      return res.status(400).json({ error: 'One or more fields exceed the allowed length' });
+    }
+    if (trap) return res.status(400).json({ error: 'Unable to accept this submission' });
+    if (!['notice', 'counter_notice'].includes(type)) {
+      return res.status(400).json({ error: 'Choose a notice or counter-notice' });
+    }
+    if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !address || !phone || !signature || !contentLocation) {
+      return res.status(400).json({ error: 'Name, valid email, mailing address, phone, signature, and content location are required' });
+    }
+
+    let relatedNoticeId = null;
+    if (type === 'notice') {
+      const goodFaith = req.body?.goodFaith === true;
+      const accuracyAndAuthority = req.body?.accuracyAndAuthority === true;
+      if (!copyrightedWork || !goodFaith || !accuracyAndAuthority) {
+        return res.status(400).json({ error: 'Identify the copyrighted work and confirm both required notice statements' });
+      }
+    } else {
+      if (priorNoticeDetails) {
+        const original = await pool.query(
+          `SELECT id FROM copyright_cases
+           WHERE LOWER(public_ref) = LOWER($1) AND submission_type = 'notice'`,
+          [priorNoticeDetails]
+        );
+        relatedNoticeId = original.rows[0]?.id ?? null;
+      }
+      if (
+        req.body?.counterGoodFaith !== true
+        || req.body?.jurisdictionConsent !== true
+        || req.body?.serviceOfProcessConsent !== true
+      ) {
+        return res.status(400).json({ error: 'Confirm the required counter-notice statements and consents' });
+      }
+    }
+
+    const publicRef = `DMCA-${randomUUID().toUpperCase()}`;
+    const result = await pool.query(
+      `INSERT INTO copyright_cases
+        (public_ref, submission_type, claimant_name, email, mailing_address, phone, signature,
+         copyrighted_work, content_location, prior_notice_details, related_notice_id, good_faith, accuracy_and_authority,
+         counter_good_faith, jurisdiction_consent, service_of_process_consent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       RETURNING public_ref, submission_type, status, created_at`,
+      [
+        publicRef, type, name, email, address, phone, signature, copyrightedWork,
+        contentLocation, priorNoticeDetails || '', relatedNoticeId, req.body?.goodFaith === true,
+        req.body?.accuracyAndAuthority === true, req.body?.counterGoodFaith === true,
+        req.body?.jurisdictionConsent === true, req.body?.serviceOfProcessConsent === true,
+      ]
+    );
+    res.status(201).json({ submission: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/copyright-cases', requireModeration, async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.*, original.public_ref AS original_notice_ref
+       FROM copyright_cases c
+       LEFT JOIN copyright_cases original ON original.id = c.related_notice_id
+       ORDER BY CASE WHEN c.status = 'open' THEN 0 WHEN c.status = 'investigating' THEN 1 ELSE 2 END,
+                c.created_at DESC
+       LIMIT 200`
+    );
+    res.json({ cases: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/copyright-cases/:id', requireModeration, async (req, res, next) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    const status = text(req.body?.status, 20);
+    const note = text(req.body?.resolutionNote, 3000);
+    if (!Number.isInteger(id) || !['open', 'investigating', 'resolved', 'dismissed'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid copyright case or status' });
+    }
+    const result = await pool.query(
+      `UPDATE copyright_cases
+       SET status = $1, resolution_note = $2, reviewed_by = $3, updated_at = NOW()
+       WHERE id = $4
+       RETURNING id, public_ref, status, resolution_note, reviewed_by, updated_at`,
+      [status, note, req.currentUser.id, id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Copyright case not found' });
+    res.json({ case: result.rows[0] });
   } catch (err) {
     next(err);
   }

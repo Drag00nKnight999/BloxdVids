@@ -18,7 +18,7 @@
   <div class="section-header">
     <div>
       <h2 class="section-title">Moderation center</h2>
-      <p style="color:var(--text-muted);font-size:.875rem;margin-top:.25rem">Review content, reports, appeals, and account restrictions.</p>
+      <p style="color:var(--text-muted);font-size:.875rem;margin-top:.25rem">Review content, copyright submissions, reports, appeals, and account restrictions.</p>
     </div>
     <a href="/settings.html" class="btn btn-ghost btn-sm">Account settings</a>
   </div>
@@ -66,8 +66,13 @@ if (!me.user || !me.user.canModerate) {
   }
   const reports = await api.get('/api/platform/reports');
   const appeals = await api.get('/api/platform/appeals');
+  const copyrightCases = await api.get('/api/platform/copyright-cases');
   const sections = document.createElement('div');
   sections.innerHTML = `
+    <section style="margin-top:2rem">
+      <div class="section-header"><h2 class="section-title">Copyright submissions (${copyrightCases.cases.length})</h2></div>
+      <div id="copyright-cases-list">${copyrightCases.cases.length ? copyrightCases.cases.map(copyrightCaseRow).join('') : '<p style="color:var(--text-muted)">No copyright submissions.</p>'}</div>
+    </section>
     <section style="margin-top:2rem">
       <div class="section-header"><h2 class="section-title">Reports (${reports.reports.length})</h2></div>
       <div id="reports-list">${reports.reports.length ? reports.reports.map(reportRow).join('') : '<p style="color:var(--text-muted)">No reports.</p>'}</div>
@@ -87,6 +92,21 @@ if (!me.user || !me.user.canModerate) {
     await api.patch(`/api/platform/appeals/${button.dataset.appealStatus}`, { status: button.dataset.nextStatus, decisionNote: '' });
     button.closest('.my-uploads-card').remove();
     toast('Appeal updated', 'success');
+  }));
+  sections.querySelectorAll('[data-copyright-save]').forEach(button => button.addEventListener('click', async () => {
+    const card = button.closest('.copyright-case-card');
+    button.disabled = true;
+    try {
+      await api.patch(`/api/platform/copyright-cases/${button.dataset.copyrightSave}`, {
+        status: card.querySelector('[data-case-status]').value,
+        resolutionNote: card.querySelector('[data-case-note]').value,
+      });
+      toast('Copyright submission updated', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not update submission', 'error');
+    } finally {
+      button.disabled = false;
+    }
   }));
   if (me.user.canManagePlatform) await renderUsers(document.querySelector('.container.page'));
 }
@@ -108,6 +128,25 @@ function appealRow(appeal) {
     <p style="margin:.5rem 0">${esc(appeal.reason)}</p>
     ${appeal.status === 'open' ? `<button class="btn btn-primary btn-sm" data-appeal-status="${appeal.id}" data-next-status="resolved">Approve appeal</button>
     <button class="btn btn-ghost btn-sm" data-appeal-status="${appeal.id}" data-next-status="dismissed">Dismiss</button>` : ''}</div></div>`;
+}
+function copyrightCaseRow(item) {
+  const title = item.submission_type === 'counter_notice' ? 'Counter-notice' : 'Copyright notice';
+  const check = (label, value) => `<p><strong>${esc(label)}:</strong> ${value ? 'Confirmed' : 'Not confirmed'}</p>`;
+  return `<article class="my-uploads-card copyright-case-card" style="align-items:flex-start">
+    <div class="my-uploads-info">
+      <p class="my-uploads-title">${title} · ${esc(item.public_ref)}</p>
+      <p class="my-uploads-meta">${esc(item.status)} · Submitted ${formatDate(item.created_at)}${item.original_notice_ref ? ` · Linked notice ${esc(item.original_notice_ref)}` : ''}</p>
+      ${item.prior_notice_details ? `<p><strong>Original notice reference/details:</strong><br/>${esc(item.prior_notice_details).replace(/\n/g, '<br/>')}</p>` : ''}
+      <p><strong>Name:</strong> ${esc(item.claimant_name)} · <strong>Email:</strong> ${esc(item.email)}</p>
+      <p><strong>Phone:</strong> ${esc(item.phone)}</p><p><strong>Mailing address:</strong><br/>${esc(item.mailing_address).replace(/\n/g, '<br/>')}</p>
+      <p><strong>Electronic signature:</strong> ${esc(item.signature)}</p>
+      ${item.submission_type === 'notice' ? `<p><strong>Copyrighted work:</strong><br/>${esc(item.copyrighted_work).replace(/\n/g, '<br/>')}</p>${check('Good-faith belief', item.good_faith)}${check('Accuracy and authority under penalty of perjury', item.accuracy_and_authority)}` : `${check('Counter-notice good-faith statement under penalty of perjury', item.counter_good_faith)}${check('Jurisdiction consent', item.jurisdiction_consent)}${check('Service-of-process consent', item.service_of_process_consent)}`}
+      <p><strong>${item.submission_type === 'notice' ? 'Reported content locations' : 'Removed material and previous location'}:</strong><br/>${esc(item.content_location).replace(/\n/g, '<br/>')}</p>
+      <div class="form-group" style="margin-top:1rem"><label>Status</label><select class="form-control" data-case-status style="max-width:240px">${['open','investigating','resolved','dismissed'].map(status => `<option value="${status}" ${status === item.status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
+      <div class="form-group"><label>Internal review note</label><textarea class="form-control" data-case-note maxlength="3000">${esc(item.resolution_note || '')}</textarea></div>
+      <button class="btn btn-primary btn-sm" data-copyright-save="${item.id}">Save review</button>
+    </div>
+  </article>`;
 }
 async function renderUsers(page) {
   const data = await api.get('/api/platform/users');

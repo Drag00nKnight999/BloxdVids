@@ -132,6 +132,72 @@ export async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_appeals_status ON appeals(status, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS copyright_cases (
+      id SERIAL PRIMARY KEY,
+      public_ref VARCHAR(50) NOT NULL UNIQUE,
+      submission_type VARCHAR(20) NOT NULL CHECK (submission_type IN ('notice', 'counter_notice')),
+      claimant_name VARCHAR(200) NOT NULL,
+      email VARCHAR(320) NOT NULL,
+      mailing_address VARCHAR(2000) NOT NULL,
+      phone VARCHAR(60) NOT NULL,
+      signature VARCHAR(200) NOT NULL,
+      copyrighted_work TEXT NOT NULL DEFAULT '',
+      content_location TEXT NOT NULL,
+      prior_notice_details VARCHAR(2000) NOT NULL DEFAULT '',
+      related_notice_id INTEGER REFERENCES copyright_cases(id) ON DELETE SET NULL,
+      good_faith BOOLEAN NOT NULL DEFAULT FALSE,
+      accuracy_and_authority BOOLEAN NOT NULL DEFAULT FALSE,
+      counter_good_faith BOOLEAN NOT NULL DEFAULT FALSE,
+      jurisdiction_consent BOOLEAN NOT NULL DEFAULT FALSE,
+      service_of_process_consent BOOLEAN NOT NULL DEFAULT FALSE,
+      status VARCHAR(20) NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'investigating', 'resolved', 'dismissed')),
+      resolution_note TEXT,
+      reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT copyright_cases_intake_check CHECK (
+        (submission_type = 'notice' AND related_notice_id IS NULL
+          AND good_faith AND accuracy_and_authority
+          AND copyrighted_work <> '')
+        OR
+        (submission_type = 'counter_notice'
+          AND counter_good_faith AND jurisdiction_consent AND service_of_process_consent)
+      )
+    );
+    ALTER TABLE copyright_cases
+      ADD COLUMN IF NOT EXISTS prior_notice_details VARCHAR(2000) NOT NULL DEFAULT '';
+    DO $$
+    DECLARE outdated_constraint TEXT;
+    BEGIN
+      SELECT conname INTO outdated_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'copyright_cases'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) LIKE '%related_notice_id IS NOT NULL%'
+      LIMIT 1;
+      IF outdated_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE copyright_cases DROP CONSTRAINT %I', outdated_constraint);
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'copyright_cases'::regclass
+          AND conname = 'copyright_cases_intake_check'
+      ) THEN
+        ALTER TABLE copyright_cases
+          ADD CONSTRAINT copyright_cases_intake_check CHECK (
+            (submission_type = 'notice' AND related_notice_id IS NULL
+              AND good_faith AND accuracy_and_authority
+              AND copyrighted_work <> '')
+            OR
+            (submission_type = 'counter_notice'
+              AND counter_good_faith AND jurisdiction_consent AND service_of_process_consent)
+          );
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_copyright_cases_status ON copyright_cases(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_copyright_cases_related_notice ON copyright_cases(related_notice_id);
+
     CREATE TABLE IF NOT EXISTS bug_reports (
       id SERIAL PRIMARY KEY,
       reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
