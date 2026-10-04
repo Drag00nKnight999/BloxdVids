@@ -1,1 +1,2 @@
 - [Identity migrations](identity-and-channel-migrations.md) — require new identity fields for new accounts while preserving legacy records that lack verified data.
+- [App Storage bucket IDs](app-storage-bucket-id.md) — use the Bucket ID from App Storage settings; the visible bucket label may be rejected by the SDK.
