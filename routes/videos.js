@@ -85,7 +85,7 @@ router.get('/', async (req, res) => {
     const offset = (pageNum - 1) * limitNum;
 
     const params = [];
-    const conditions = ["v.storage_key <> 'pending'"];
+    const conditions = ["v.storage_key <> 'pending'", 'c.copyright_suspended_at IS NULL'];
     let query;
     if (q && q.trim()) {
       params.push(q.trim(), `%${q.trim()}%`);
@@ -182,7 +182,8 @@ router.get('/:id', async (req, res) => {
        `SELECT v.*, u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name
         FROM videos v JOIN users u ON u.id = v.user_id
         LEFT JOIN channels c ON c.user_id = u.id
-       WHERE v.id = $1 AND v.storage_key <> 'pending'`,
+       WHERE v.id = $1 AND v.storage_key <> 'pending'
+         AND c.copyright_suspended_at IS NULL`,
       [id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Video not found' });
@@ -335,6 +336,9 @@ router.post(
 // PATCH /api/videos/:id — owners can edit public metadata
 router.patch('/:id', requireAuth, async (req, res) => {
   try {
+    if (req.currentUser.copyright_suspended) {
+      return res.status(403).json({ error: 'Your channel is suspended after three active copyright strikes' });
+    }
     const id = Number.parseInt(req.params.id, 10);
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
@@ -359,6 +363,9 @@ router.patch('/:id', requireAuth, async (req, res) => {
 
 // PATCH /api/videos/:id/thumbnail — owners can replace a thumbnail
 router.patch('/:id/thumbnail', requireAuth, (req, res, next) => {
+  if (req.currentUser.copyright_suspended) {
+    return res.status(403).json({ error: 'Your channel is suspended after three active copyright strikes' });
+  }
   thumbnailUpload.single('thumbnail')(req, res, (err) => {
     if (err) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: err.code === 'LIMIT_FILE_SIZE' ? 'Thumbnail too large (max 10 MB)' : err.message,
@@ -403,9 +410,14 @@ router.get('/:id/comments', async (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid video ID' });
     const result = await pool.query(
-      `SELECT c.id, c.content, c.created_at, c.updated_at, u.id AS user_id, u.username
-       FROM video_comments c JOIN users u ON u.id = c.user_id
-       WHERE c.video_id = $1 ORDER BY c.created_at DESC LIMIT 200`,
+      `SELECT comment.id, comment.content, comment.created_at, comment.updated_at,
+              u.id AS user_id, u.username
+       FROM video_comments comment
+       JOIN users u ON u.id = comment.user_id
+       JOIN videos v ON v.id = comment.video_id
+       LEFT JOIN channels ch ON ch.user_id = v.user_id
+       WHERE comment.video_id = $1 AND ch.copyright_suspended_at IS NULL
+       ORDER BY comment.created_at DESC LIMIT 200`,
       [id]
     );
     res.json({ comments: result.rows });
@@ -420,7 +432,11 @@ router.post('/:id/comments', requireAuth, async (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     const content = typeof req.body?.content === 'string' ? req.body.content.trim().slice(0, 2000) : '';
     if (!Number.isInteger(id) || !content) return res.status(400).json({ error: 'Comment text is required' });
-    const video = await pool.query('SELECT 1 FROM videos WHERE id = $1', [id]);
+    const video = await pool.query(
+      `SELECT 1 FROM videos v LEFT JOIN channels c ON c.user_id = v.user_id
+       WHERE v.id = $1 AND c.copyright_suspended_at IS NULL`,
+      [id]
+    );
     if (!video.rows[0]) return res.status(404).json({ error: 'Video not found' });
     const result = await pool.query(
       `INSERT INTO video_comments (video_id, user_id, content)
@@ -457,6 +473,12 @@ router.delete('/:id/comments/:commentId', requireAuth, async (req, res) => {
 router.post('/:id/like', requireAuth, async (req, res) => {
   try {
     const id = Number.parseInt(req.params.id, 10);
+    const available = await pool.query(
+      `SELECT 1 FROM videos v LEFT JOIN channels c ON c.user_id = v.user_id
+       WHERE v.id = $1 AND c.copyright_suspended_at IS NULL`,
+      [id]
+    );
+    if (!available.rows[0]) return res.status(404).json({ error: 'Video not found' });
     const result = await pool.query(
       `INSERT INTO video_likes (video_id, user_id) VALUES ($1, $2)
        ON CONFLICT DO NOTHING RETURNING video_id`,
@@ -533,7 +555,12 @@ router.get('/:id/stream', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid video ID' });
 
-    const result = await pool.query('SELECT storage_key, mime_type, file_size FROM videos WHERE id = $1', [id]);
+    const result = await pool.query(
+      `SELECT v.storage_key, v.mime_type, v.file_size
+       FROM videos v LEFT JOIN channels c ON c.user_id = v.user_id
+       WHERE v.id = $1 AND c.copyright_suspended_at IS NULL`,
+      [id]
+    );
     const video = result.rows[0];
     if (!video || video.storage_key === 'pending') return res.status(404).json({ error: 'Video not found' });
 
@@ -545,7 +572,7 @@ router.get('/:id/stream', async (req, res) => {
       'Content-Length': video.file_size,
       'Accept-Ranges': 'none',
       'Content-Type': video.mime_type,
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': 'private, no-store',
     });
     stream.on('error', (err) => {
       console.error('Storage stream error:', err);
@@ -565,7 +592,12 @@ router.get('/:id/thumbnail', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).end();
 
-    const result = await pool.query('SELECT thumbnail_key, thumbnail_mime_type FROM videos WHERE id = $1', [id]);
+    const result = await pool.query(
+      `SELECT v.thumbnail_key, v.thumbnail_mime_type
+       FROM videos v LEFT JOIN channels c ON c.user_id = v.user_id
+       WHERE v.id = $1 AND c.copyright_suspended_at IS NULL`,
+      [id]
+    );
     const video = result.rows[0];
 
     if (!video?.thumbnail_key) {
@@ -576,7 +608,7 @@ router.get('/:id/thumbnail', async (req, res) => {
     const stream = downloadStream(video.thumbnail_key);
     res.set({
       'Content-Type': video.thumbnail_mime_type || 'image/jpeg',
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'private, no-store',
     });
     stream.on('error', () => {
       if (!res.headersSent) res.redirect('/placeholder-thumb.svg');

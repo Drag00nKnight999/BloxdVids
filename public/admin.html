@@ -67,11 +67,21 @@ if (!me.user || !me.user.canModerate) {
   const reports = await api.get('/api/platform/reports');
   const appeals = await api.get('/api/platform/appeals');
   const copyrightCases = await api.get('/api/platform/copyright-cases');
+  const copyrightStrikes = await api.get('/api/platform/copyright-strikes');
+  const copyrightAppeals = await api.get('/api/platform/copyright-appeals');
   const sections = document.createElement('div');
   sections.innerHTML = `
     <section style="margin-top:2rem">
       <div class="section-header"><h2 class="section-title">Copyright submissions (${copyrightCases.cases.length})</h2></div>
-      <div id="copyright-cases-list">${copyrightCases.cases.length ? copyrightCases.cases.map(copyrightCaseRow).join('') : '<p style="color:var(--text-muted)">No copyright submissions.</p>'}</div>
+      <div id="copyright-cases-list">${copyrightCases.cases.length ? copyrightCases.cases.map(item => copyrightCaseRow(item, data.videos)).join('') : '<p style="color:var(--text-muted)">No copyright submissions.</p>'}</div>
+    </section>
+    <section style="margin-top:2rem">
+      <div class="section-header"><h2 class="section-title">Copyright strikes (${copyrightStrikes.strikes.length})</h2></div>
+      <div id="copyright-strikes-list">${copyrightStrikes.strikes.length ? copyrightStrikes.strikes.map(copyrightStrikeRow).join('') : '<p style="color:var(--text-muted)">No confirmed copyright strikes.</p>'}</div>
+    </section>
+    <section style="margin-top:2rem">
+      <div class="section-header"><h2 class="section-title">Copyright strike appeals (${copyrightAppeals.appeals.length})</h2></div>
+      <div id="copyright-appeals-list">${copyrightAppeals.appeals.length ? copyrightAppeals.appeals.map(copyrightAppealRow).join('') : '<p style="color:var(--text-muted)">No copyright strike appeals.</p>'}</div>
     </section>
     <section style="margin-top:2rem">
       <div class="section-header"><h2 class="section-title">Reports (${reports.reports.length})</h2></div>
@@ -108,6 +118,33 @@ if (!me.user || !me.user.canModerate) {
       button.disabled = false;
     }
   }));
+  sections.querySelectorAll('[data-issue-dmca-strike]').forEach(button => button.addEventListener('click', async () => {
+    const card = button.closest('.copyright-case-card');
+    const videoId = Number(card.querySelector('[data-case-strike-video]').value);
+    if (!videoId) return toast('Select the affected video first', 'error');
+    await issueCopyrightStrike(button, `/api/platform/copyright-cases/${button.dataset.issueDmcaStrike}/strike`, { videoId });
+  }));
+  sections.querySelectorAll('[data-issue-report-strike]').forEach(button => button.addEventListener('click', async () => {
+    await issueCopyrightStrike(button, `/api/platform/copyright-reports/${button.dataset.issueReportStrike}/strike`, {});
+  }));
+  sections.querySelectorAll('[data-copyright-appeal-save]').forEach(button => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const card = button.closest('.copyright-appeal-card');
+      const result = await api.patch(`/api/platform/copyright-appeals/${button.dataset.copyrightAppealSave}`, {
+        status: card.querySelector('[data-copyright-appeal-status]').value,
+        decisionNote: card.querySelector('[data-copyright-appeal-note]').value,
+      });
+      toast(result.suspended
+        ? `Appeal updated. The channel still has ${result.activeStrikes} active strikes and remains suspended.`
+        : `Appeal updated. ${result.activeStrikes} active strike${result.activeStrikes === 1 ? '' : 's'} remain.`,
+      'success');
+      setTimeout(() => window.location.reload(), 500);
+    } catch (err) {
+      button.disabled = false;
+      toast(err.message || 'Could not update copyright appeal', 'error');
+    }
+  }));
   if (me.user.canManagePlatform) await renderUsers(document.querySelector('.container.page'));
 }
 function esc(value) {
@@ -118,6 +155,7 @@ function reportRow(report) {
     <div class="my-uploads-info"><p class="my-uploads-title">${esc(report.category)}${report.video_title ? ` · ${esc(report.video_title)}` : ''}</p>
     <p class="my-uploads-meta">Reported by ${esc(report.reporter)}${report.reported_user ? ` · ${esc(report.reported_user)}` : ''} · ${esc(report.status)}</p>
     <p style="margin:.5rem 0">${esc(report.details)}</p>
+    ${report.category === 'copyright' && report.video_id && report.status !== 'dismissed' ? `<button class="btn btn-primary btn-sm" data-issue-report-strike="${report.id}">Confirm infringement and issue strike</button>` : ''}
     ${report.status === 'open' ? `<button class="btn btn-ghost btn-sm" data-report-status="${report.id}" data-next-status="resolved">Resolve</button>
     <button class="btn btn-ghost btn-sm" data-report-status="${report.id}" data-next-status="dismissed">Dismiss</button>` : ''}</div></div>`;
 }
@@ -129,7 +167,7 @@ function appealRow(appeal) {
     ${appeal.status === 'open' ? `<button class="btn btn-primary btn-sm" data-appeal-status="${appeal.id}" data-next-status="resolved">Approve appeal</button>
     <button class="btn btn-ghost btn-sm" data-appeal-status="${appeal.id}" data-next-status="dismissed">Dismiss</button>` : ''}</div></div>`;
 }
-function copyrightCaseRow(item) {
+function copyrightCaseRow(item, videos) {
   const title = item.submission_type === 'counter_notice' ? 'Counter-notice' : 'Copyright notice';
   const check = (label, value) => `<p><strong>${esc(label)}:</strong> ${value ? 'Confirmed' : 'Not confirmed'}</p>`;
   return `<article class="my-uploads-card copyright-case-card" style="align-items:flex-start">
@@ -145,8 +183,55 @@ function copyrightCaseRow(item) {
       <div class="form-group" style="margin-top:1rem"><label>Status</label><select class="form-control" data-case-status style="max-width:240px">${['open','investigating','resolved','dismissed'].map(status => `<option value="${status}" ${status === item.status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
       <div class="form-group"><label>Internal review note</label><textarea class="form-control" data-case-note maxlength="3000">${esc(item.resolution_note || '')}</textarea></div>
       <button class="btn btn-primary btn-sm" data-copyright-save="${item.id}">Save review</button>
+       ${item.submission_type === 'notice' && item.status !== 'dismissed' ? `<div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">
+         <p><strong>Issue a strike only after confirming the infringement.</strong> A strike applies to the selected channel; three active strikes suspend it.</p>
+         <div class="form-group"><label>Affected video</label><select class="form-control" data-case-strike-video><option value="">Select a video</option>${videos.map(video => `<option value="${video.id}">${esc(video.title)} · ${esc(video.uploader)}</option>`).join('')}</select></div>
+         ${videos.length ? `<button class="btn btn-danger btn-sm" data-issue-dmca-strike="${item.id}">Confirm infringement and issue strike</button>` : '<p style="color:var(--text-muted)">No videos are available to associate with a strike.</p>'}
+       </div>` : ''}
     </div>
   </article>`;
+}
+function copyrightStrikeRow(strike) {
+  return `<div class="my-uploads-card"><div class="my-uploads-info">
+    <p class="my-uploads-title">${esc(strike.channel_handle)} · ${esc(strike.channel_owner)} · ${esc(strike.status)} strike</p>
+    <p class="my-uploads-meta">${esc(strike.source_reference || strike.source_type)} · ${esc(strike.video_title || 'Video unavailable')} · ${strike.active_channel_strikes} active strike${strike.active_channel_strikes === 1 ? '' : 's'}/3 · ${formatDate(strike.created_at)}</p>
+    <p>${esc(strike.reason)}</p>
+  </div></div>`;
+}
+function copyrightAppealRow(appeal) {
+  const final = appeal.status === 'granted' || appeal.status === 'denied';
+  return `<article class="my-uploads-card copyright-appeal-card"><div class="my-uploads-info">
+    <p class="my-uploads-title">${esc(appeal.appellant)} · @${esc(appeal.channel_handle)} · Strike #${appeal.strike_id}</p>
+    <p class="my-uploads-meta">${esc(appeal.status)} · ${esc(appeal.video_title || 'Video unavailable')} · ${formatDate(appeal.created_at)}</p>
+    <p><strong>Strike basis:</strong> ${esc(appeal.strike_reason)}</p>
+    <p><strong>Appeal:</strong> ${esc(appeal.reason)}</p>
+    ${final ? `<p><strong>Decision note:</strong> ${esc(appeal.decision_note || 'None provided')}</p>` : `
+      <div class="form-group" style="margin-top:1rem"><label>Decision</label><select class="form-control" data-copyright-appeal-status>
+        <option value="investigating" ${appeal.status === 'investigating' ? 'selected' : ''}>Continue investigating</option>
+        <option value="granted">Grant appeal and rescind strike</option>
+        <option value="denied">Deny appeal</option>
+      </select></div>
+      <div class="form-group"><label>Decision note</label><textarea class="form-control" data-copyright-appeal-note maxlength="3000">${esc(appeal.decision_note || '')}</textarea></div>
+      <button class="btn btn-primary btn-sm" data-copyright-appeal-save="${appeal.id}">Save decision</button>`}
+  </div></article>`;
+}
+async function issueCopyrightStrike(button, endpoint, payload) {
+  if (!confirm('Only continue if a moderator has confirmed copyright infringement. Three active strikes suspend public access to the channel.')) return;
+  const reason = prompt('Record the confirmed infringement and the basis for this strike:');
+  if (!reason?.trim()) return;
+  button.disabled = true;
+  try {
+    const result = await api.post(endpoint, { ...payload, reason });
+    const strike = result.strike;
+    toast(strike.suspended
+      ? `Strike issued. This channel now has ${strike.activeStrikes} active strikes and is suspended.`
+      : `Strike issued. This channel now has ${strike.activeStrikes} active strike${strike.activeStrikes === 1 ? '' : 's'} of 3.`,
+    'success');
+    setTimeout(() => window.location.reload(), 500);
+  } catch (err) {
+    button.disabled = false;
+    toast(err.message || 'Could not issue copyright strike', 'error');
+  }
 }
 async function renderUsers(page) {
   const data = await api.get('/api/platform/users');

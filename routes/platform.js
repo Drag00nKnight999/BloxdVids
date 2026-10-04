@@ -49,6 +49,81 @@ async function findUser(id) {
   return result.rows[0];
 }
 
+async function inTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function addCopyrightStrike(client, { sourceType, sourceId, videoId, reviewerId, reason }) {
+  const target = await client.query(
+    `SELECT c.id AS channel_id
+     FROM videos v JOIN channels c ON c.user_id = v.user_id
+     WHERE v.id = $1
+     FOR UPDATE OF c`,
+    [videoId]
+  );
+  if (!target.rows[0]) return { error: 'The selected video or its channel no longer exists' };
+
+  const channelId = target.rows[0].channel_id;
+  const inserted = await client.query(
+    `INSERT INTO copyright_strikes
+       (channel_id, target_video_id, source_type, source_id, reason, issued_by)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (source_type, source_id) DO NOTHING
+     RETURNING id`,
+    [channelId, videoId, sourceType, sourceId, reason, reviewerId]
+  );
+  if (!inserted.rows[0]) return { duplicate: true };
+
+  const count = await client.query(
+    `SELECT COUNT(*)::integer AS active_strikes
+     FROM copyright_strikes
+     WHERE channel_id = $1 AND status = 'active'`,
+    [channelId]
+  );
+  const activeStrikes = count.rows[0].active_strikes;
+  await client.query(
+    `UPDATE channels
+     SET copyright_suspended_at = CASE
+       WHEN $2 >= 3 THEN COALESCE(copyright_suspended_at, NOW())
+       ELSE NULL
+     END
+     WHERE id = $1`,
+    [channelId, activeStrikes]
+  );
+  return { strikeId: inserted.rows[0].id, channelId, activeStrikes, suspended: activeStrikes >= 3 };
+}
+
+async function refreshCopyrightSuspension(client, channelId) {
+  const count = await client.query(
+    `SELECT COUNT(*)::integer AS active_strikes
+     FROM copyright_strikes
+     WHERE channel_id = $1 AND status = 'active'`,
+    [channelId]
+  );
+  const activeStrikes = count.rows[0].active_strikes;
+  await client.query(
+    `UPDATE channels
+     SET copyright_suspended_at = CASE
+       WHEN $2 >= 3 THEN COALESCE(copyright_suspended_at, NOW())
+       ELSE NULL
+     END
+     WHERE id = $1`,
+    [channelId, activeStrikes]
+  );
+  return { activeStrikes, suspended: activeStrikes >= 3 };
+}
+
 function targetError(actor, target) {
   if (!target) return 'User not found';
   if (!canManageTarget(actor, target)) {
@@ -338,6 +413,244 @@ router.patch('/copyright-cases/:id', requireModeration, async (req, res, next) =
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Copyright case not found' });
     res.json({ case: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A strike is created only when a moderator explicitly confirms infringement.
+router.post('/copyright-cases/:id/strike', requireModeration, async (req, res, next) => {
+  try {
+    const caseId = Number.parseInt(req.params.id, 10);
+    const videoId = Number.parseInt(req.body?.videoId, 10);
+    const reason = text(req.body?.reason, 3000);
+    if (!Number.isInteger(caseId) || !Number.isInteger(videoId) || !reason) {
+      return res.status(400).json({ error: 'A notice, affected video, and confirmation reason are required' });
+    }
+    const outcome = await inTransaction(async (client) => {
+      const copyrightCase = await client.query(
+        'SELECT id, submission_type, status FROM copyright_cases WHERE id = $1 FOR UPDATE',
+        [caseId]
+      );
+      if (!copyrightCase.rows[0]) return { error: 'Copyright notice not found', status: 404 };
+      if (copyrightCase.rows[0].submission_type !== 'notice' || copyrightCase.rows[0].status === 'dismissed') {
+        return { error: 'Only an active copyright notice can result in a strike', status: 400 };
+      }
+      const strike = await addCopyrightStrike(client, {
+        sourceType: 'dmca_notice',
+        sourceId: caseId,
+        videoId,
+        reviewerId: req.currentUser.id,
+        reason,
+      });
+      if (strike.error) return { error: strike.error, status: 404 };
+      if (strike.duplicate) return { error: 'A strike has already been issued for this notice', status: 409 };
+      await client.query(
+        `UPDATE copyright_cases
+         SET status = 'resolved', resolution_note = $1, reviewed_by = $2, updated_at = NOW()
+         WHERE id = $3`,
+        [reason, req.currentUser.id, caseId]
+      );
+      return strike;
+    });
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+    res.status(201).json({ strike: outcome });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/copyright-strikes/mine', requireAuth, async (req, res, next) => {
+  try {
+    const channel = await pool.query(
+      `SELECT id, handle, copyright_suspended_at
+       FROM channels WHERE user_id = $1`,
+      [req.currentUser.id]
+    );
+    if (!channel.rows[0]) {
+      return res.json({ channel: null, activeStrikes: 0, suspended: false, strikes: [] });
+    }
+    const strikes = await pool.query(
+      `SELECT s.id, s.source_type, s.reason, s.status, s.created_at,
+              s.target_video_id, v.title AS video_title, latest_appeal.status AS appeal_status
+       FROM copyright_strikes s
+       LEFT JOIN videos v ON v.id = s.target_video_id
+       LEFT JOIN LATERAL (
+         SELECT ca.status FROM copyright_appeals ca
+         WHERE ca.strike_id = s.id AND ca.appellant_id = $2
+         ORDER BY ca.created_at DESC LIMIT 1
+       ) latest_appeal ON TRUE
+       WHERE s.channel_id = $1
+       ORDER BY s.created_at DESC LIMIT 100`,
+      [channel.rows[0].id, req.currentUser.id]
+    );
+    const active = strikes.rows.filter((strike) => strike.status === 'active').length;
+    res.json({
+      channel: { handle: channel.rows[0].handle },
+      activeStrikes: active,
+      suspended: Boolean(channel.rows[0].copyright_suspended_at),
+      strikes: strikes.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/copyright-reports/:id/strike', requireModeration, async (req, res, next) => {
+  try {
+    const reportId = Number.parseInt(req.params.id, 10);
+    const reason = text(req.body?.reason, 3000);
+    if (!Number.isInteger(reportId) || !reason) {
+      return res.status(400).json({ error: 'A copyright report and confirmation reason are required' });
+    }
+    const outcome = await inTransaction(async (client) => {
+      const report = await client.query(
+        `SELECT id, category, status, video_id
+         FROM reports WHERE id = $1 FOR UPDATE`,
+        [reportId]
+      );
+      if (!report.rows[0]) return { error: 'Report not found', status: 404 };
+      if (report.rows[0].category !== 'copyright' || report.rows[0].status === 'dismissed') {
+        return { error: 'Only an active copyright report can result in a strike', status: 400 };
+      }
+      if (!report.rows[0].video_id) return { error: 'This copyright report is not linked to a video', status: 400 };
+      const strike = await addCopyrightStrike(client, {
+        sourceType: 'copyright_report',
+        sourceId: reportId,
+        videoId: report.rows[0].video_id,
+        reviewerId: req.currentUser.id,
+        reason,
+      });
+      if (strike.error) return { error: strike.error, status: 404 };
+      if (strike.duplicate) return { error: 'A strike has already been issued for this report', status: 409 };
+      await client.query(
+        `UPDATE reports
+         SET status = 'resolved', resolution_note = $1, reviewed_by = $2, updated_at = NOW()
+         WHERE id = $3`,
+        [reason, req.currentUser.id, reportId]
+      );
+      return strike;
+    });
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+    res.status(201).json({ strike: outcome });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/copyright-strikes', requireModeration, async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT s.*, c.handle AS channel_handle, u.username AS channel_owner,
+              v.title AS video_title,
+              CASE WHEN s.source_type = 'dmca_notice' THEN cc.public_ref
+                   ELSE 'Copyright report #' || s.source_id::text END AS source_reference,
+              (SELECT COUNT(*)::integer FROM copyright_strikes active
+               WHERE active.channel_id = s.channel_id AND active.status = 'active') AS active_channel_strikes
+       FROM copyright_strikes s
+       JOIN channels c ON c.id = s.channel_id
+       JOIN users u ON u.id = c.user_id
+       LEFT JOIN videos v ON v.id = s.target_video_id
+       LEFT JOIN copyright_cases cc ON s.source_type = 'dmca_notice' AND cc.id = s.source_id
+       ORDER BY s.created_at DESC LIMIT 500`
+    );
+    res.json({ strikes: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/copyright-appeals', requireAuth, async (req, res, next) => {
+  try {
+    const strikeId = Number.parseInt(req.body?.strikeId, 10);
+    const reason = text(req.body?.reason, 3000);
+    if (!Number.isInteger(strikeId) || !reason) {
+      return res.status(400).json({ error: 'Select an active copyright strike and provide an appeal reason' });
+    }
+    const ownership = await pool.query(
+      `SELECT s.id, s.status
+       FROM copyright_strikes s JOIN channels c ON c.id = s.channel_id
+       WHERE s.id = $1 AND c.user_id = $2`,
+      [strikeId, req.currentUser.id]
+    );
+    if (!ownership.rows[0]) return res.status(404).json({ error: 'Copyright strike not found for your channel' });
+    if (ownership.rows[0].status !== 'active') return res.status(400).json({ error: 'Only active copyright strikes can be appealed' });
+    const result = await pool.query(
+      `INSERT INTO copyright_appeals (strike_id, appellant_id, reason)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (strike_id) WHERE status IN ('open', 'investigating') DO NOTHING
+       RETURNING id, strike_id, status, created_at`,
+      [strikeId, req.currentUser.id, reason]
+    );
+    if (!result.rows[0]) return res.status(409).json({ error: 'An appeal for this strike is already under review' });
+    res.status(201).json({ appeal: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/copyright-appeals', requireModeration, async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT ca.*, appellant.username AS appellant, c.handle AS channel_handle,
+              s.reason AS strike_reason, s.status AS strike_status,
+              v.title AS video_title
+       FROM copyright_appeals ca
+       JOIN users appellant ON appellant.id = ca.appellant_id
+       JOIN copyright_strikes s ON s.id = ca.strike_id
+       JOIN channels c ON c.id = s.channel_id
+       LEFT JOIN videos v ON v.id = s.target_video_id
+       ORDER BY CASE WHEN ca.status = 'open' THEN 0 WHEN ca.status = 'investigating' THEN 1 ELSE 2 END,
+                ca.created_at DESC
+       LIMIT 500`
+    );
+    res.json({ appeals: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/copyright-appeals/:id', requireModeration, async (req, res, next) => {
+  try {
+    const appealId = Number.parseInt(req.params.id, 10);
+    const status = text(req.body?.status, 20);
+    const note = text(req.body?.decisionNote, 3000);
+    if (!Number.isInteger(appealId) || !['investigating', 'granted', 'denied'].includes(status)) {
+      return res.status(400).json({ error: 'Choose investigating, granted, or denied for this appeal' });
+    }
+    const outcome = await inTransaction(async (client) => {
+      const appeal = await client.query(
+        `SELECT ca.id, ca.status, s.id AS strike_id, s.channel_id, s.status AS strike_status
+         FROM copyright_appeals ca
+         JOIN copyright_strikes s ON s.id = ca.strike_id
+         WHERE ca.id = $1
+         FOR UPDATE OF ca, s`,
+        [appealId]
+      );
+      if (!appeal.rows[0]) return { error: 'Copyright appeal not found', status: 404 };
+      if (['granted', 'denied'].includes(appeal.rows[0].status)) {
+        return { error: 'This copyright appeal already has a final decision', status: 409 };
+      }
+      if (status === 'granted') {
+        await client.query(
+          `UPDATE copyright_strikes
+           SET status = 'rescinded', rescinded_by = $1, rescinded_at = NOW()
+           WHERE id = $2 AND status = 'active'`,
+          [req.currentUser.id, appeal.rows[0].strike_id]
+        );
+      }
+      const updated = await client.query(
+        `UPDATE copyright_appeals
+         SET status = $1, decision_note = $2, reviewer_id = $3, updated_at = NOW()
+         WHERE id = $4
+         RETURNING id, strike_id, status, decision_note, updated_at`,
+        [status, note, req.currentUser.id, appealId]
+      );
+      const channel = await refreshCopyrightSuspension(client, appeal.rows[0].channel_id);
+      return { appeal: updated.rows[0], ...channel };
+    });
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+    res.json(outcome);
   } catch (err) {
     next(err);
   }

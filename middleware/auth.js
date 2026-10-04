@@ -49,9 +49,11 @@ export function isCurrentlyRestricted(user) {
 async function loadUser(req) {
   if (!req.session?.userId) return null;
   const result = await pool.query(
-    `SELECT id, username, role, preview_mode, banned, ban_until, ban_reason,
-            restricted, restriction_until, restriction_type, restriction_reason
-     FROM users WHERE id = $1`,
+    `SELECT u.id, u.username, u.role, u.preview_mode, u.banned, u.ban_until, u.ban_reason,
+            u.restricted, u.restriction_until, u.restriction_type, u.restriction_reason,
+            COALESCE((SELECT c.copyright_suspended_at IS NOT NULL
+                      FROM channels c WHERE c.user_id = u.id), FALSE) AS copyright_suspended
+     FROM users u WHERE u.id = $1`,
     [req.session.userId]
   );
   const user = result.rows[0];
@@ -96,8 +98,10 @@ export const requireDeveloperAccess = requirePermission(
 );
 
 export const requireUploadAccess = requirePermission(
-  (user) => !isCurrentlyBanned(user) && !(isCurrentlyRestricted(user) && user.restriction_type !== 'reporting'),
-  'Your account cannot upload content while it is restricted'
+  (user) => !user.copyright_suspended
+    && !isCurrentlyBanned(user)
+    && !(isCurrentlyRestricted(user) && user.restriction_type !== 'reporting'),
+  'Your channel cannot upload while it is suspended or your account is restricted'
 );
 
 export function requireOwnerAdmin(req, res, next) {

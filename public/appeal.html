@@ -12,12 +12,19 @@
   <div class="form-error" id="error"></div><div class="form-success" id="success"></div>
   <form id="appeal-form"><div class="form-group"><label for="reason">Appeal reason</label><textarea class="form-control" id="reason" maxlength="3000" required style="min-height:160px"></textarea></div><button class="btn btn-primary" style="width:100%">Submit appeal</button></form>
 </div></main>
+<section class="container page" id="copyright-appeals" hidden style="max-width:840px">
+  <h1>Copyright strikes and appeals</h1>
+  <p id="copyright-strike-summary" style="color:var(--text-muted)"></p>
+  <div id="copyright-strike-list"></div>
+</section>
 <div id="toast-container"></div>
 <script type="module">
 import { api, initNav } from '/app.js';
 initNav();
 const me = await api.get('/api/auth/me');
 if (!me.user) location.href = '/login.html';
+const accountAppeal = document.querySelector('.auth-card');
+if (me.user && !me.user.banned && !me.user.restricted) accountAppeal.hidden = true;
 document.getElementById('appeal-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
@@ -30,6 +37,62 @@ document.getElementById('appeal-form').addEventListener('submit', async (event) 
     document.getElementById('error').classList.add('show');
   }
 });
+if (me.user) {
+  try {
+    const data = await api.get('/api/platform/copyright-strikes/mine');
+    const section = document.getElementById('copyright-appeals');
+    const list = document.getElementById('copyright-strike-list');
+    section.hidden = false;
+    document.getElementById('copyright-strike-summary').textContent = data.suspended
+      ? `Your channel is suspended with ${data.activeStrikes} active copyright strikes. Appeal an active strike below; if an appeal is granted and fewer than three remain, public access will be restored.`
+      : `Your channel has ${data.activeStrikes} active copyright strike${data.activeStrikes === 1 ? '' : 's'}. Three active strikes suspend public channel access.`;
+    list.innerHTML = data.strikes.length ? data.strikes.map(strike => {
+      const pending = ['open', 'investigating'].includes(strike.appeal_status);
+      const appealState = strike.appeal_status === 'granted' ? 'Previous appeal granted'
+        : strike.appeal_status === 'denied' ? 'Previous appeal denied'
+          : strike.appeal_status === 'investigating' ? 'Appeal under review'
+            : strike.appeal_status === 'open' ? 'Appeal submitted' : '';
+      return `<article class="my-uploads-card" style="margin-top:1rem">
+        <div class="my-uploads-info">
+          <p class="my-uploads-title">Strike #${strike.id} · ${strike.status === 'active' ? 'Active' : 'Rescinded'}</p>
+          <p class="my-uploads-meta">${strike.source_type === 'dmca_notice' ? 'DMCA notice' : 'Copyright report'} · ${esc(strike.video_title || 'Video no longer available')} · ${new Date(strike.created_at).toLocaleDateString()}</p>
+          <p>${esc(strike.reason)}</p>
+          ${appealState ? `<p style="color:var(--text-muted);margin-top:.5rem">${appealState}</p>` : ''}
+          ${strike.status === 'active' && !pending ? `<form data-copyright-appeal="${strike.id}" style="margin-top:1rem">
+            <div class="form-group"><label for="strike-appeal-${strike.id}">Why should this strike be reviewed?</label><textarea class="form-control" id="strike-appeal-${strike.id}" maxlength="3000" required></textarea></div>
+            <button class="btn btn-primary btn-sm">Submit strike appeal</button>
+          </form>` : ''}
+        </div>
+      </article>`;
+    }).join('') : '<p style="margin-top:1rem;color:var(--text-muted)">No copyright strikes are recorded for your channel.</p>';
+    list.querySelectorAll('[data-copyright-appeal]').forEach(form => form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = form.querySelector('button');
+      button.disabled = true;
+      try {
+        await api.post('/api/platform/copyright-appeals', {
+          strikeId: Number(form.dataset.copyrightAppeal),
+          reason: form.querySelector('textarea').value,
+        });
+        form.innerHTML = '<p class="form-success show" role="status">Appeal submitted for moderator review.</p>';
+      } catch (err) {
+        button.disabled = false;
+        const message = document.createElement('p');
+        message.className = 'form-error show';
+        message.setAttribute('role', 'alert');
+        message.textContent = err.message || 'Appeal could not be submitted.';
+        form.appendChild(message);
+      }
+    }));
+  } catch (err) {
+    const section = document.getElementById('copyright-appeals');
+    section.hidden = false;
+    document.getElementById('copyright-strike-summary').textContent = err.message || 'Copyright strike information could not be loaded.';
+  }
+}
+function esc(value) {
+  return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 </script>
 </body>
 </html>

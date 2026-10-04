@@ -91,9 +91,11 @@ export async function initDb() {
       name VARCHAR(100) NOT NULL,
       description VARCHAR(1000) NOT NULL DEFAULT '',
       subscriber_count INTEGER NOT NULL DEFAULT 0,
+      copyright_suspended_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE channels ADD COLUMN IF NOT EXISTS copyright_suspended_at TIMESTAMPTZ;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_handle_lower ON channels (LOWER(handle));
 
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -197,6 +199,38 @@ export async function initDb() {
     END $$;
     CREATE INDEX IF NOT EXISTS idx_copyright_cases_status ON copyright_cases(status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_copyright_cases_related_notice ON copyright_cases(related_notice_id);
+
+    CREATE TABLE IF NOT EXISTS copyright_strikes (
+      id SERIAL PRIMARY KEY,
+      channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      target_video_id INTEGER REFERENCES videos(id) ON DELETE SET NULL,
+      source_type VARCHAR(30) NOT NULL CHECK (source_type IN ('dmca_notice', 'copyright_report')),
+      source_id INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'rescinded')),
+      issued_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      rescinded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      rescinded_at TIMESTAMPTZ,
+      UNIQUE (source_type, source_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_copyright_strikes_channel_status ON copyright_strikes(channel_id, status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS copyright_appeals (
+      id SERIAL PRIMARY KEY,
+      strike_id INTEGER NOT NULL REFERENCES copyright_strikes(id) ON DELETE CASCADE,
+      appellant_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reason TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'investigating', 'granted', 'denied')),
+      decision_note TEXT,
+      reviewer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_copyright_appeals_status ON copyright_appeals(status, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_copyright_appeal_per_strike
+      ON copyright_appeals(strike_id) WHERE status IN ('open', 'investigating');
 
     CREATE TABLE IF NOT EXISTS bug_reports (
       id SERIAL PRIMARY KEY,

@@ -38,10 +38,12 @@ if (!handle) {
       <section style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2rem;margin-bottom:2rem">
         <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap">
           <div><h1>${esc(channel.name)}</h1><p style="color:var(--text-muted)">@${esc(channel.handle)} · ${channel.subscriber_count} subscribers</p>
-          <p style="color:var(--text-muted);max-width:680px;margin-top:.75rem">${esc(channel.description || 'No channel description yet.')}</p></div>
+          ${channel.copyright_suspended
+            ? '<p role="status" style="color:var(--text-muted);max-width:680px;margin-top:.75rem">This channel is unavailable after three or more active, moderator-confirmed copyright strikes.</p>'
+            : `<p style="color:var(--text-muted);max-width:680px;margin-top:.75rem">${esc(channel.description || 'No channel description yet.')}</p>`}</div>
           <div style="display:flex;gap:.5rem">
-            ${meData.user && !isOwner ? `<button class="btn ${channel.subscribed ? 'btn-ghost' : 'btn-primary'}" id="subscribe">${channel.subscribed ? 'Subscribed' : 'Subscribe'}</button>` : ''}
-            ${isOwner ? '<button class="btn btn-ghost" id="edit-channel">Edit channel</button>' : ''}
+            ${meData.user && !isOwner && !channel.copyright_suspended ? `<button class="btn ${channel.subscribed ? 'btn-ghost' : 'btn-primary'}" id="subscribe">${channel.subscribed ? 'Subscribed' : 'Subscribe'}</button>` : ''}
+            ${isOwner && !channel.copyright_suspended ? '<button class="btn btn-ghost" id="edit-channel">Edit channel</button>' : ''}
           </div>
         </div>
         ${isOwner ? `<form id="edit-form" style="display:none;margin-top:1.25rem">
@@ -50,8 +52,10 @@ if (!handle) {
           <button class="btn btn-primary" style="margin-top:.75rem">Save channel</button>
         </form>` : ''}
       </section>`;
-    videosEl.innerHTML = `<div class="section-header"><h2 class="section-title">Videos</h2></div>
-      ${videoData.videos.length ? `<div class="video-grid">${videoData.videos.map(videoCard).join('')}</div>` : '<div class="empty-state"><h3>No videos yet</h3><p>This channel has not uploaded anything.</p></div>'}`;
+    videosEl.innerHTML = channel.copyright_suspended
+      ? `<div class="empty-state"><h3>Channel suspended</h3><p>Videos are hidden from public access while the channel has at least three active copyright strikes. The videos have not been permanently deleted.</p>${isOwner ? '<a class="btn btn-primary" href="/appeal.html" style="margin-top:1rem">Appeal a copyright strike</a>' : ''}</div>`
+      : `<div class="section-header"><h2 class="section-title">Videos</h2></div>
+        ${videoData.videos.length ? `<div class="video-grid">${videoData.videos.map(videoCard).join('')}</div>` : '<div class="empty-state"><h3>No videos yet</h3><p>This channel has not uploaded anything.</p></div>'}`;
     document.getElementById('subscribe')?.addEventListener('click', async (event) => {
       const subscribed = channel.subscribed;
       const result = await (subscribed

@@ -31,6 +31,7 @@ async function findChannel(handle) {
   const result = await pool.query(
     `SELECT c.id, c.user_id, c.handle, c.name, c.description, c.created_at,
             (SELECT COUNT(*) FROM subscriptions s WHERE s.channel_id = c.id)::integer AS subscriber_count,
+            c.copyright_suspended_at IS NOT NULL AS copyright_suspended,
             u.username
      FROM channels c JOIN users u ON u.id = c.user_id
      WHERE LOWER(c.handle) = LOWER($1)`,
@@ -69,6 +70,9 @@ router.post('/:handle/subscribe', requireAuth, async (req, res, next) => {
   try {
     const channel = await findChannel(req.params.handle);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
+    if (channel.copyright_suspended) {
+      return res.status(403).json({ error: 'This channel is unavailable after copyright enforcement' });
+    }
     if (channel.user_id === req.currentUser.id) return res.status(400).json({ error: 'You cannot subscribe to your own channel' });
     await pool.query(
       `INSERT INTO subscriptions (subscriber_id, channel_id)
@@ -99,6 +103,9 @@ router.get('/:handle/videos', async (req, res, next) => {
   try {
     const channel = await findChannel(req.params.handle);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
+    if (channel.copyright_suspended) {
+      return res.json({ channel, videos: [] });
+    }
     const result = await pool.query(
       `SELECT v.id, v.title, v.description, v.thumbnail_key, v.view_count,
               v.created_at, v.file_size, v.mime_type, u.username AS uploader
