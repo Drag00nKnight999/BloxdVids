@@ -4,7 +4,11 @@ let client;
 
 export function getStorageClient() {
   if (!client) {
-    client = new Client();
+    const bucketId = process.env.REPLIT_OBJECT_STORAGE_BUCKET?.trim();
+    if (!bucketId) {
+      throw new Error('REPLIT_OBJECT_STORAGE_BUCKET must contain the App Storage Bucket ID from App Storage settings');
+    }
+    client = new Client({ bucketId });
   }
   return client;
 }

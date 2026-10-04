@@ -20,7 +20,7 @@
   <h1>Upload a video</h1>
 
   <div class="form-error" id="error-msg"></div>
-  <div class="form-success" id="success-msg"></div>
+  <div class="form-success" id="success-msg" role="status" aria-live="polite"></div>
 
   <form id="upload-form" enctype="multipart/form-data">
     <!-- Video file drop zone -->
@@ -226,11 +226,17 @@ form.addEventListener('submit', async (e) => {
          showUploadError('The upload completed without a video ID. Please try again.');
          return;
        }
-      progressLabel.textContent = 'Upload complete!';
+       progressLabel.textContent = 'Upload complete!';
       progressBar.style.width = '100%';
-      successMsg.textContent = 'Video uploaded successfully! Redirecting…';
+       successMsg.textContent = 'Video uploaded successfully! ';
+       const watchLink = document.createElement('a');
+       watchLink.href = `/watch.html?id=${encodeURIComponent(data.video.id)}`;
+       watchLink.textContent = 'Watch video';
+       watchLink.className = 'upload-success-link';
+       successMsg.appendChild(watchLink);
       successMsg.classList.add('show');
-      setTimeout(() => window.location.href = `/watch.html?id=${data.video.id}`, 1200);
+       submitBtn.disabled = false;
+       submitBtn.textContent = 'Upload another video';
     } else {
       let msg = 'Upload failed';
       try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}

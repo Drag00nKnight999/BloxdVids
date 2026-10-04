@@ -85,7 +85,7 @@ router.get('/', async (req, res) => {
     const offset = (pageNum - 1) * limitNum;
 
     const params = [];
-    const conditions = [];
+    const conditions = ["v.storage_key <> 'pending'"];
     let query;
     if (q && q.trim()) {
       params.push(q.trim(), `%${q.trim()}%`);
@@ -182,7 +182,7 @@ router.get('/:id', async (req, res) => {
        `SELECT v.*, u.username AS uploader, c.handle AS channel_handle, c.name AS channel_name
         FROM videos v JOIN users u ON u.id = v.user_id
         LEFT JOIN channels c ON c.user_id = u.id
-       WHERE v.id = $1`,
+       WHERE v.id = $1 AND v.storage_key <> 'pending'`,
       [id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Video not found' });
